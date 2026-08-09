@@ -1,0 +1,6 @@
+services:
+  app:
+    environment:
+      TEMPLATE_DIR: /app/templates
+    volumes:
+      - ./app/templates:/app/templates:ro

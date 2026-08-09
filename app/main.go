@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -84,7 +85,18 @@ var funcMap = template.FuncMap{
 }
 
 func renderTemplate(w http.ResponseWriter, name string, data any) {
-	t, err := template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/base.html", "templates/"+name+".html")
+	var (
+		t   *template.Template
+		err error
+	)
+
+	if templateDir := os.Getenv("TEMPLATE_DIR"); templateDir != "" {
+		baseTemplate := filepath.Join(templateDir, "base.html")
+		pageTemplate := filepath.Join(templateDir, name+".html")
+		t, err = template.New("").Funcs(funcMap).ParseFiles(baseTemplate, pageTemplate)
+	} else {
+		t, err = template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/base.html", "templates/"+name+".html")
+	}
 	if err != nil {
 		slog.Error("parse template", "name", name, "err", err)
 		http.Error(w, "template error", http.StatusInternalServerError)
