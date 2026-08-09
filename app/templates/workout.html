@@ -1,7 +1,7 @@
 {{define "title"}}Workout{{end}}
 {{define "content"}}
 <h2 class="mb-3">Workout – Exercise Volume</h2>
-<div class="mb-3 d-flex flex-column gap-2">
+<div id="workout-controls" class="mb-3 d-flex flex-column gap-2" style="position:sticky;top:0;z-index:1050;background:rgba(24,27,36,0.9);backdrop-filter:blur(6px);padding:0.6rem 0.75rem;border:1px solid rgba(255,255,255,0.08);border-radius:0.6rem;">
   <div class="d-flex align-items-center gap-2 flex-wrap">
     <span class="small text-body-secondary text-uppercase" style="letter-spacing:0.08em;">Range</span>
     <div class="btn-group btn-group-sm" role="group" aria-label="Date presets">
@@ -23,6 +23,16 @@
         <label class="btn btn-outline-secondary" for="mode-volume">Total Volume</label>
         <input type="radio" class="btn-check" name="chart-mode" id="mode-max" autocomplete="off" />
         <label class="btn btn-outline-secondary" for="mode-max">Highest Weight</label>
+        <input type="radio" class="btn-check" name="chart-mode" id="mode-performance" autocomplete="off" />
+        <label class="btn btn-outline-secondary" for="mode-performance">Performance Index</label>
+      </div>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Performance baseline workouts">
+        <input type="radio" class="btn-check" name="performance-window" id="perf-window-4" autocomplete="off" />
+        <label class="btn btn-outline-secondary" for="perf-window-4">Perf 4</label>
+        <input type="radio" class="btn-check" name="performance-window" id="perf-window-6" autocomplete="off" checked />
+        <label class="btn btn-outline-secondary" for="perf-window-6">Perf 6</label>
+        <input type="radio" class="btn-check" name="performance-window" id="perf-window-8" autocomplete="off" />
+        <label class="btn btn-outline-secondary" for="perf-window-8">Perf 8</label>
       </div>
       <div class="btn-group btn-group-sm" role="group" aria-label="Grouping mode">
         <input type="radio" class="btn-check" name="group-mode" id="group-recents" autocomplete="off" checked />
@@ -134,13 +144,84 @@ function filterDataByDateRange(data, startDate, endDate) {
   return filtered;
 }
 
+function currentMetricMode() {
+  if (document.getElementById('mode-max').checked) return 'max';
+  if (document.getElementById('mode-performance').checked) return 'performance';
+  return 'volume';
+}
+
+function getPerformanceWindowSize() {
+  const selected = document.querySelector('input[name="performance-window"]:checked');
+  if (!selected) return 6;
+  if (selected.id === 'perf-window-4') return 4;
+  if (selected.id === 'perf-window-8') return 8;
+  return 6;
+}
+
+function buildPerformanceData(startDate, endDate, windowSize) {
+  const totals = filterDataByDateRange(EXERCISE_DAILY_TOTALS, startDate, endDate);
+  const maxes = filterDataByDateRange(EXERCISE_DAILY_MAX, startDate, endDate);
+  const ids = [...new Set([...Object.keys(totals), ...Object.keys(maxes)])];
+  const output = {};
+
+  for (const id of ids) {
+    const byTotal = totals[id] || {};
+    const byMax = maxes[id] || {};
+    const dates = [...new Set([...Object.keys(byTotal), ...Object.keys(byMax)])].sort();
+    const sessions = [];
+
+    for (const d of dates) {
+      const volume = byTotal[d];
+      const load = byMax[d];
+      if (volume == null || load == null || volume <= 0 || load <= 0) continue;
+      sessions.push({ d, volume, load });
+    }
+    if (sessions.length === 0) continue;
+
+    const series = {};
+    for (let i = 0; i < sessions.length; i++) {
+      const startIdx = Math.max(0, i - windowSize + 1);
+      const baseline = sessions.slice(startIdx, i + 1);
+      const bestLoad = Math.max(...baseline.map(s => s.load));
+      const bestVolume = Math.max(...baseline.map(s => s.volume));
+      if (bestLoad <= 0 || bestVolume <= 0) continue;
+
+      const loadScore = sessions[i].load / bestLoad;
+      const volumeScore = sessions[i].volume / bestVolume;
+
+      // 0..100 rolling performance index based on recent comparable workouts.
+      series[sessions[i].d] = loadScore * volumeScore * 100;
+    }
+
+    if (Object.keys(series).length > 0) output[id] = series;
+  }
+
+  return output;
+}
+
+function formatPrimaryMetric(value) {
+  if (value == null || Number.isNaN(value)) return '';
+  if (currentMetricMode() === 'performance') return `${value.toFixed(0)} idx`;
+  return `${value.toFixed(1)} kg`;
+}
+
+function metricTickLabel(value) {
+  if (currentMetricMode() === 'performance') return `${Math.round(value)}`;
+  return `${value} kg`;
+}
+
 function activeData() {
-  const raw = document.getElementById('mode-max').checked ? EXERCISE_DAILY_MAX : EXERCISE_DAILY_TOTALS;
   const start = getSelectedStartDate();
-  return filterDataByDateRange(raw, start, TODAY_STR);
+  const mode = currentMetricMode();
+  if (mode === 'max') return filterDataByDateRange(EXERCISE_DAILY_MAX, start, TODAY_STR);
+  if (mode === 'performance') return buildPerformanceData(start, TODAY_STR, getPerformanceWindowSize());
+  return filterDataByDateRange(EXERCISE_DAILY_TOTALS, start, TODAY_STR);
 }
 function yLabel() {
-  return document.getElementById('mode-max').checked ? 'Highest weight (kg)' : 'Total volume (kg)';
+  const mode = currentMetricMode();
+  if (mode === 'max') return 'Highest weight (kg)';
+  if (mode === 'performance') return 'Performance index';
+  return 'Total volume (kg)';
 }
 function groupingMode() {
   return document.getElementById('group-recents').checked ? 'recents' : 'muscle';
@@ -254,6 +335,26 @@ function lastNonNull(values) {
 function buildGroupRelativeTrend(sectionExerciseIds, labels, dataByExercise) {
   if (!sectionExerciseIds || sectionExerciseIds.length === 0 || labels.length === 0) return null;
 
+  // Performance index is already normalized per exercise (0..100), so use
+  // direct averaging to preserve differences between Perf 4/6/8 baselines.
+  if (currentMetricMode() === 'performance') {
+    const sums = new Array(labels.length).fill(0);
+    const counts = new Array(labels.length).fill(0);
+
+    for (const id of sectionExerciseIds) {
+      const valueByDate = dataByExercise[id] || {};
+      for (let i = 0; i < labels.length; i++) {
+        const v = valueByDate[labels[i]];
+        if (v == null) continue;
+        sums[i] += v;
+        counts[i] += 1;
+      }
+    }
+
+    const avg = sums.map((sum, i) => (counts[i] > 0 ? sum / counts[i] : null));
+    return avg.some(v => v != null) ? avg : null;
+  }
+
   const relSums = new Array(labels.length).fill(0);
   const relCounts = new Array(labels.length).fill(0);
 
@@ -346,7 +447,9 @@ function renderSectionBackgroundTrend(section, sectionExerciseIds, useLinearDate
     if (valid.length >= 2) {
       const first = valid[0];
       const last = valid[valid.length - 1];
-      improvement = last - first;
+      if (first !== 0) {
+        improvement = (last - first) / Math.abs(first);
+      }
     }
   }
 
@@ -556,13 +659,13 @@ async function renderOverviewChart() {
 
   for (let i = 0; i < selectedIds.length; i++) {
     const id = selectedIds[i];
-    const dailyTotals = EXERCISE_DAILY_TOTALS[id];
-    if (!dailyTotals) continue;
+    const byDate = data[id];
+    if (!byDate) continue;
     const name = EXERCISE_NAMES[id] || `Exercise ${id}`;
     const color = COLORS[i % COLORS.length];
     datasets.push({
       label: name,
-      data: labels.map(d => (d in data[id] ? data[id][d] : null)),
+      data: labels.map(d => (d in byDate ? byDate[d] : null)),
       borderColor: color,
       backgroundColor: color + '66',
       stack: stackedMode ? 'sel' : undefined,
@@ -583,12 +686,12 @@ async function renderOverviewChart() {
       tooltip: {
         mode: 'index', intersect: false,
         filter: item => item.parsed.y != null,
-        callbacks: { label: ctx => ctx.parsed.y == null ? null : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} kg` }
+        callbacks: { label: ctx => ctx.parsed.y == null ? null : `${ctx.dataset.label}: ${formatPrimaryMetric(ctx.parsed.y)}` }
       }
     },
     scales: {
       x: { ticks: { color: '#777', maxTicksLimit: 16 }, grid: { color: '#2a2a36' }, stacked: stackedMode },
-      y: { ticks: { color: '#777', callback: v => `${v} kg` }, grid: { color: '#2a2a36' }, stacked: stackedMode, beginAtZero: true }
+      y: { ticks: { color: '#777', callback: v => metricTickLabel(v) }, grid: { color: '#2a2a36' }, stacked: stackedMode, beginAtZero: true }
     }
   };
 
@@ -726,7 +829,7 @@ function renderExerciseChart(id, name, colorIndex, absoluteLabels, useLinearDate
     x: { ticks: { color: '#777', maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.05)' } },
     y: {
       position: 'left',
-      ticks: { color: '#777', callback: v => `${v} kg` },
+      ticks: { color: '#777', callback: v => metricTickLabel(v) },
       grid: { color: 'rgba(255,255,255,0.05)' },
       beginAtZero: true,
     },
@@ -760,8 +863,8 @@ function renderExerciseChart(id, name, colorIndex, absoluteLabels, useLinearDate
           callbacks: {
             label: ctx => {
               if (ctx.dataset.yAxisID === 'y-weight') return ` Body weight: ${ctx.parsed.y.toFixed(1)} kg`;
-              if (ctx.dataset.label.endsWith(' trend')) return ` Trend: ${ctx.parsed.y.toFixed(1)} kg`;
-              return ` ${ctx.parsed.y.toFixed(1)} kg`;
+              if (ctx.dataset.label.endsWith(' trend')) return ` Trend: ${formatPrimaryMetric(ctx.parsed.y)}`;
+              return ` ${formatPrimaryMetric(ctx.parsed.y)}`;
             }
           }
         }
@@ -917,6 +1020,7 @@ if (Object.keys(EXERCISE_DAILY_TOTALS).length === 0) {
   const showHiddenToggle = document.getElementById('show-hidden-toggle');
   const stackedToggle = document.getElementById('overview-stacked-toggle');
   const modeInputs    = document.querySelectorAll('input[name="chart-mode"]');
+  const perfWindowInputs = document.querySelectorAll('input[name="performance-window"]');
   const groupInputs   = document.querySelectorAll('input[name="group-mode"]');
 
   rangeStartInput.min = FIRST_WORKOUT_DATE;
@@ -952,12 +1056,13 @@ if (Object.keys(EXERCISE_DAILY_TOTALS).length === 0) {
 
   applyPreset('all');
 
-  absToggle.addEventListener('change', () => renderAll(absToggle.checked));
-  linearToggle.addEventListener('change', () => renderAll(absToggle.checked));
-  showHiddenToggle.addEventListener('change', () => renderAll(absToggle.checked));
+  absToggle.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked));
+  linearToggle.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked));
+  showHiddenToggle.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked));
   stackedToggle.addEventListener('change', () => renderOverviewChart());
-  modeInputs.forEach(r => r.addEventListener('change', () => renderAll(absToggle.checked)));
-  groupInputs.forEach(r => r.addEventListener('change', () => renderAll(absToggle.checked)));
+  modeInputs.forEach(r => r.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked)));
+  perfWindowInputs.forEach(r => r.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked)));
+  groupInputs.forEach(r => r.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked)));
 
   renderAll(false);
 }
