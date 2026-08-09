@@ -1,37 +1,57 @@
 {{define "title"}}Workout{{end}}
 {{define "content"}}
 <h2 class="mb-3">Workout – Exercise Volume</h2>
-<div class="mb-2 d-flex flex-wrap gap-3 align-items-center">
-  <div class="btn-group btn-group-sm" role="group" aria-label="Chart mode">
-    <input type="radio" class="btn-check" name="chart-mode" id="mode-volume" autocomplete="off" checked />
-    <label class="btn btn-outline-secondary" for="mode-volume">Total Volume</label>
-    <input type="radio" class="btn-check" name="chart-mode" id="mode-max" autocomplete="off" />
-    <label class="btn btn-outline-secondary" for="mode-max">Highest Weight</label>
+<div class="mb-3 d-flex flex-column gap-2">
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <span class="small text-body-secondary text-uppercase" style="letter-spacing:0.08em;">Range</span>
+    <div class="btn-group btn-group-sm" role="group" aria-label="Date presets">
+      <button type="button" class="btn btn-outline-secondary range-preset-btn" data-range="all">Since start</button>
+      <button type="button" class="btn btn-outline-secondary range-preset-btn" data-range="12m">12 months</button>
+      <button type="button" class="btn btn-outline-secondary range-preset-btn" data-range="6m">6 months</button>
+      <button type="button" class="btn btn-outline-secondary range-preset-btn" data-range="3m">3 months</button>
+      <button type="button" class="btn btn-outline-secondary range-preset-btn" data-range="1m">1 month</button>
+      <button type="button" class="btn btn-outline-secondary range-preset-btn" data-range="14d">2 weeks</button>
+      <button type="button" class="btn btn-outline-secondary range-preset-btn" data-range="7d">7 days</button>
+    </div>
+    <input type="date" id="range-start-date" class="form-control form-control-sm" style="width:auto;min-width:170px;" />
   </div>
-  <div class="btn-group btn-group-sm" role="group" aria-label="Grouping mode">
-    <input type="radio" class="btn-check" name="group-mode" id="group-recents" autocomplete="off" checked />
-    <label class="btn btn-outline-secondary" for="group-recents">Most recents</label>
-    <input type="radio" class="btn-check" name="group-mode" id="group-muscle" autocomplete="off" />
-    <label class="btn btn-outline-secondary" for="group-muscle">Muscle groups</label>
+  <div class="d-flex flex-wrap align-items-center gap-3">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="small text-body-secondary text-uppercase" style="letter-spacing:0.08em;">Modes</span>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Chart mode">
+        <input type="radio" class="btn-check" name="chart-mode" id="mode-volume" autocomplete="off" checked />
+        <label class="btn btn-outline-secondary" for="mode-volume">Total Volume</label>
+        <input type="radio" class="btn-check" name="chart-mode" id="mode-max" autocomplete="off" />
+        <label class="btn btn-outline-secondary" for="mode-max">Highest Weight</label>
+      </div>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Grouping mode">
+        <input type="radio" class="btn-check" name="group-mode" id="group-recents" autocomplete="off" checked />
+        <label class="btn btn-outline-secondary" for="group-recents">Most recents</label>
+        <input type="radio" class="btn-check" name="group-mode" id="group-muscle" autocomplete="off" />
+        <label class="btn btn-outline-secondary" for="group-muscle">Muscle groups</label>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <label>
+        <input type="checkbox" id="absolute-dates-toggle" class="form-check-input me-1" />
+        Shared date range
+      </label>
+      <label>
+        <input type="checkbox" id="linear-dates-toggle" class="form-check-input me-1" checked />
+        Linear X axis
+      </label>
+      <label>
+        <input type="checkbox" id="show-hidden-toggle" class="form-check-input me-1" checked />
+        Hide hidden exercises
+      </label>
+      <label>
+        <input type="checkbox" id="overview-stacked-toggle" class="form-check-input me-1" />
+        Stacked overview
+      </label>
+    </div>
   </div>
-  <label>
-    <input type="checkbox" id="absolute-dates-toggle" class="form-check-input me-1" />
-    Shared date range
-  </label>
-  <label>
-    <input type="checkbox" id="linear-dates-toggle" class="form-check-input me-1" checked />
-    Linear X axis
-  </label>
-  <label>
-    <input type="checkbox" id="show-hidden-toggle" class="form-check-input me-1" checked />
-    Hide hidden exercises
-  </label>
-  <label>
-    <input type="checkbox" id="overview-stacked-toggle" class="form-check-input me-1" />
-    Stacked overview
-  </label>
 </div>
-<div class="card mb-4">
+<div class="card mb-4" id="overview-card">
   <div class="card-body">
     <h6 class="card-subtitle text-body-secondary mb-2" id="overview-card-title">Selected exercises overlay</h6>
     <div style="position:relative;height:clamp(280px,45vh,520px);">
@@ -50,8 +70,74 @@ const EXERCISE_DAILY_MAX    = {{.ExerciseDailyMax}};
 const EXERCISE_NAMES        = {{.ExerciseNames}};
 const WEIGHT_POINTS_RAW     = {{.WeightPoints}};
 
+function formatLocalDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function parseYMD(ymd) {
+  return new Date(`${ymd}T00:00:00`);
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function addMonths(date, months) {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  return d;
+}
+
+const TODAY_STR = formatLocalDate(new Date());
+
+function firstWorkoutDate() {
+  let minDate = null;
+  for (const byDate of Object.values(EXERCISE_DAILY_TOTALS)) {
+    for (const d of Object.keys(byDate || {})) {
+      if (!minDate || d < minDate) minDate = d;
+    }
+  }
+  return minDate || TODAY_STR;
+}
+
+const FIRST_WORKOUT_DATE = firstWorkoutDate();
+
+function clampStartDate(ymd) {
+  if (!ymd) return FIRST_WORKOUT_DATE;
+  if (ymd < FIRST_WORKOUT_DATE) return FIRST_WORKOUT_DATE;
+  if (ymd > TODAY_STR) return TODAY_STR;
+  return ymd;
+}
+
+function getSelectedStartDate() {
+  const input = document.getElementById('range-start-date');
+  if (!input) return FIRST_WORKOUT_DATE;
+  const clamped = clampStartDate(input.value);
+  if (input.value !== clamped) input.value = clamped;
+  return clamped;
+}
+
+function filterDataByDateRange(data, startDate, endDate) {
+  const filtered = {};
+  for (const [id, byDate] of Object.entries(data || {})) {
+    const out = {};
+    for (const [d, value] of Object.entries(byDate || {})) {
+      if (d >= startDate && d <= endDate) out[d] = value;
+    }
+    if (Object.keys(out).length > 0) filtered[id] = out;
+  }
+  return filtered;
+}
+
 function activeData() {
-  return document.getElementById('mode-max').checked ? EXERCISE_DAILY_MAX : EXERCISE_DAILY_TOTALS;
+  const raw = document.getElementById('mode-max').checked ? EXERCISE_DAILY_MAX : EXERCISE_DAILY_TOTALS;
+  const start = getSelectedStartDate();
+  return filterDataByDateRange(raw, start, TODAY_STR);
 }
 function yLabel() {
   return document.getElementById('mode-max').checked ? 'Highest weight (kg)' : 'Total volume (kg)';
@@ -433,6 +519,7 @@ function buildDateRange(startDate, endDate) {
 // ── overview chart ──
 
 async function renderOverviewChart() {
+  const overviewCard = document.getElementById('overview-card');
   const title = document.querySelector('#overview-card-title');
   const canvas = document.getElementById('overview-canvas');
   const stackedMode = document.getElementById('overview-stacked-toggle').checked;
@@ -440,6 +527,7 @@ async function renderOverviewChart() {
   const data = activeData();
 
   if (selectedIds.length === 0) {
+    if (overviewCard) overviewCard.style.display = 'none';
     title.textContent = 'Selected exercises overlay (select a chart below)';
     if (overviewChart) {
       overviewChart.data.labels = [];
@@ -450,6 +538,8 @@ async function renderOverviewChart() {
     }
     return;
   }
+
+  if (overviewCard) overviewCard.style.display = 'block';
 
   const { minDate, maxDate } = (() => {
     let mn = null, mx = null;
@@ -820,12 +910,47 @@ if (Object.keys(EXERCISE_DAILY_TOTALS).length === 0) {
     '<p class="text-body-secondary">No workout data yet — the wger sync job will populate this.</p>';
 } else {
   ensureToastAnimationStyle();
+  const rangeStartInput = document.getElementById('range-start-date');
+  const rangePresetBtns = document.querySelectorAll('.range-preset-btn');
   const absToggle     = document.getElementById('absolute-dates-toggle');
   const linearToggle  = document.getElementById('linear-dates-toggle');
   const showHiddenToggle = document.getElementById('show-hidden-toggle');
   const stackedToggle = document.getElementById('overview-stacked-toggle');
   const modeInputs    = document.querySelectorAll('input[name="chart-mode"]');
   const groupInputs   = document.querySelectorAll('input[name="group-mode"]');
+
+  rangeStartInput.min = FIRST_WORKOUT_DATE;
+  rangeStartInput.max = TODAY_STR;
+  rangeStartInput.value = FIRST_WORKOUT_DATE;
+
+  rangeStartInput.addEventListener('change', () => {
+    clampStartDate(rangeStartInput.value);
+    rangePresetBtns.forEach(btn => btn.classList.remove('active'));
+    renderAll(absToggle.checked);
+  });
+
+  function applyPreset(preset) {
+    const today = parseYMD(TODAY_STR);
+    let start = new Date(today);
+    if (preset === 'all') start = parseYMD(FIRST_WORKOUT_DATE);
+    else if (preset === '12m') start = addMonths(today, -12);
+    else if (preset === '6m') start = addMonths(today, -6);
+    else if (preset === '3m') start = addMonths(today, -3);
+    else if (preset === '1m') start = addMonths(today, -1);
+    else if (preset === '14d') start = addDays(today, -14);
+    else if (preset === '7d') start = addDays(today, -7);
+
+    const clamped = clampStartDate(formatLocalDate(start));
+    rangeStartInput.value = clamped;
+    rangePresetBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.range === preset));
+    renderAll(absToggle.checked);
+  }
+
+  rangePresetBtns.forEach(btn => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.range));
+  });
+
+  applyPreset('all');
 
   absToggle.addEventListener('change', () => renderAll(absToggle.checked));
   linearToggle.addEventListener('change', () => renderAll(absToggle.checked));
