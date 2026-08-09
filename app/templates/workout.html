@@ -24,6 +24,47 @@
 // Data injected from Go
 const EXERCISE_DAILY_TOTALS = {{.ExerciseDailyTotals}};
 const EXERCISE_NAMES        = {{.ExerciseNames}};
+const WEIGHT_POINTS_RAW     = {{.WeightPoints}};
+
+// Pre-process weight points with timestamps for interpolation
+const weightPoints = WEIGHT_POINTS_RAW.map(p => ({
+  date: p.date,
+  weight: p.weight,
+  ts: new Date(p.date + 'T12:00:00').getTime(),
+}));
+
+function interpolateWeight(dateStr) {
+  if (weightPoints.length === 0) return null;
+  const ts = new Date(dateStr + 'T12:00:00').getTime();
+  let before = null, after = null;
+  for (const p of weightPoints) {
+    if (p.ts <= ts) before = p;
+    else if (!after) after = p;
+  }
+  if (before && after) {
+    const t = (ts - before.ts) / (after.ts - before.ts);
+    return before.weight + t * (after.weight - before.weight);
+  }
+  if (before) {
+    const pts = weightPoints.filter(p => p.ts <= ts);
+    if (pts.length >= 2) {
+      const [p1, p2] = [pts[pts.length - 2], pts[pts.length - 1]];
+      const dt = p2.ts - p1.ts;
+      if (dt > 0) return p2.weight + ((p2.weight - p1.weight) / dt) * (ts - p2.ts);
+    }
+    return before.weight;
+  }
+  if (after) {
+    const pts = weightPoints.filter(p => p.ts >= ts);
+    if (pts.length >= 2) {
+      const [p1, p2] = [pts[0], pts[1]];
+      const dt = p2.ts - p1.ts;
+      if (dt > 0) return p1.weight + ((p2.weight - p1.weight) / dt) * (ts - p1.ts);
+    }
+    return after.weight;
+  }
+  return null;
+}
 
 const COLORS = [
   '#6c63ff','#ff6584','#43e97b','#f9ca24','#30cfd0',
@@ -153,6 +194,10 @@ function renderExerciseChart(id, name, dailyTotals, colorIndex, absoluteLabels, 
   const data   = absoluteLabels ? labels.map(d => (d in valueByDate ? valueByDate[d] : null)) : sortedDates.map(d => dailyTotals[d]);
   const color  = COLORS[colorIndex % COLORS.length];
 
+  // Body weight interpolated for each label date
+  const bodyWeightValues = labels.map(d => interpolateWeight(d));
+  const hasWeight = bodyWeightValues.some(v => v !== null);
+
   const card = document.createElement('div');
   card.className = 'card chart-card' + (selectedExerciseIds.has(String(id)) ? ' border-primary' : '');
   card.dataset.exerciseId = String(id);
@@ -173,33 +218,74 @@ function renderExerciseChart(id, name, dailyTotals, colorIndex, absoluteLabels, 
   card.appendChild(body);
   container.appendChild(card);
 
+  const datasets = [];
+  if (hasWeight) {
+    datasets.push({
+      type: 'bar',
+      label: 'Body weight (kg)',
+      data: bodyWeightValues,
+      yAxisID: 'y-weight',
+      backgroundColor: 'rgba(255,200,80,0.13)',
+      borderColor: 'rgba(255,200,80,0.35)',
+      borderWidth: 1,
+      order: 0,
+    });
+  }
+  datasets.push({
+    type: 'line',
+    label: 'Total weight moved (kg)',
+    data,
+    yAxisID: 'y',
+    borderColor: color,
+    backgroundColor: color + '22',
+    borderWidth: 2,
+    pointRadius: 3,
+    tension: 0.3,
+    fill: true,
+    spanGaps: !!absoluteLabels,
+    order: 1,
+  });
+
+  const scales = {
+    x: { ticks: { color: '#777', maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+    y: {
+      position: 'left',
+      ticks: { color: '#777', callback: v => `${v} kg` },
+      grid: { color: 'rgba(255,255,255,0.05)' },
+      beginAtZero: true,
+    },
+  };
+  if (hasWeight) {
+    const nonNull = bodyWeightValues.filter(v => v !== null);
+    const minW = Math.min(...nonNull), maxW = Math.max(...nonNull);
+    const pad = Math.max((maxW - minW) * 0.5, 2);
+    scales['y-weight'] = {
+      position: 'right',
+      ticks: { color: 'rgba(255,200,80,0.55)', callback: v => v.toFixed(1) },
+      grid: { drawOnChartArea: false },
+      min: Math.floor(minW - pad),
+      max: Math.ceil(maxW + pad),
+    };
+  }
+
   new Chart(canvas, {
     type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: 'Total weight moved (kg)',
-        data,
-        borderColor: color,
-        backgroundColor: color + '22',
-        borderWidth: 2,
-        pointRadius: 3,
-        tension: 0.3,
-        fill: true,
-        spanGaps: !!absoluteLabels,
-      }]
-    },
+    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(1)} kg` } }
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              if (ctx.dataset.yAxisID === 'y-weight') return ` Body weight: ${ctx.parsed.y.toFixed(1)} kg`;
+              return ` ${ctx.parsed.y.toFixed(1)} kg`;
+            }
+          }
+        }
       },
-      scales: {
-        x: { ticks: { color: '#777', maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.05)' } },
-        y: { ticks: { color: '#777', callback: v => `${v} kg` }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: true }
-      }
+      scales,
     }
   });
 

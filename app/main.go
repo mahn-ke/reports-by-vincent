@@ -431,13 +431,17 @@ type workoutPageData struct {
 	ExerciseDailyTotals template.JS
 	// JSON object: {exerciseId: "name", ...}
 	ExerciseNames template.JS
+	// JSON array: [{date: "YYYY-MM-DD", weight: float}, ...]
+	WeightPoints template.JS
 }
 
 func (a *App) handleWorkout(w http.ResponseWriter, r *http.Request) {
 	var exercises []WorkoutExercise
 	var entries []WorkoutLogEntry
+	var body []BodyMeasurement
 	a.apiGet(r.Context(), "/internal/workout/exercises", &exercises)
 	a.apiGet(r.Context(), "/internal/workout/entries", &entries)
+	a.apiGet(r.Context(), "/internal/body", &body)
 
 	// Build name map
 	nameMap := make(map[int]string, len(exercises))
@@ -454,11 +458,25 @@ func (a *App) handleWorkout(w http.ResponseWriter, r *http.Request) {
 		totals[e.ExerciseID][e.Date] += e.Weight * float64(e.Repetitions)
 	}
 
+	// Build weight points: [{date, weight}, ...]
+	type weightPoint struct {
+		Date   string  `json:"date"`
+		Weight float64 `json:"weight"`
+	}
+	wpts := make([]weightPoint, 0, len(body))
+	for _, b := range body {
+		if b.Weight > 0 {
+			wpts = append(wpts, weightPoint{Date: b.MeasuredAt.Format("2006-01-02"), Weight: b.Weight})
+		}
+	}
+
 	totalsJ, _ := json.Marshal(totals)
 	namesJ, _ := json.Marshal(nameMap)
+	wptsJ, _ := json.Marshal(wpts)
 	renderTemplate(w, "workout", workoutPageData{
 		ExerciseDailyTotals: template.JS(totalsJ),
 		ExerciseNames:       template.JS(namesJ),
+		WeightPoints:        template.JS(wptsJ),
 	})
 }
 
