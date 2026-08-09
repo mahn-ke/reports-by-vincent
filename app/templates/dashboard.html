@@ -1,0 +1,46 @@
+{{define "title"}}Dashboard{{end}}
+{{define "content"}}
+<h2 class="mb-4">Dashboard</h2>
+<div class="row g-3">
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-body-secondary mb-1">Last Calories</h6>
+        <p class="fs-4 fw-semibold mb-0">{{printf "%.0f" .LastCalories}} kcal</p>
+        <small class="text-body-secondary">{{.LastCalDate}}</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-body-secondary mb-1">Last Weight</h6>
+        <p class="fs-4 fw-semibold mb-0">{{printf "%.1f" .LastWeight}} kg</p>
+        <small class="text-body-secondary">{{.LastWeightDate}}</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-body-secondary mb-1">Training Sessions</h6>
+        <p class="fs-4 fw-semibold mb-0">{{.TrainingTotal}}</p>
+        <small class="text-body-secondary">last: {{.LastTrainDate}}</small>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-body-secondary mb-1">Signed in as</h6>
+        <p class="fs-5 fw-semibold mb-0">{{.Username}}</p>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="row mt-4 g-3">
+  <div class="col-md-4"><a class="btn btn-outline-primary w-100" href="/nutrition">→ Nutrition</a></div>
+  <div class="col-md-4"><a class="btn btn-outline-primary w-100" href="/training">→ Training</a></div>
+  <div class="col-md-4"><a class="btn btn-outline-primary w-100" href="/body">→ Body</a></div>
+</div>
+{{end}}

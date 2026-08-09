@@ -1,0 +1,84 @@
+# Local env vars required (set in shell or .env file):
+#   DB_PASSWORD, SESSION_SECRET
+#   OAUTH_URL, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_NAME
+#   REPORTS_ADMIN_USERNAME, REPORTS_ADMIN_PASSWORD
+#   MFP_COOKIE (from mahn-ke/myfitnesspal-fetcher secrets)
+#   FITX_EMAIL, FITX_PASSWORD (from mahn-ke/fitx-fetcher secrets)
+#   GARMIN_EMAIL, GARMIN_PASSWORD
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: reports
+      POSTGRES_USER: reports
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reports"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://reports:${DB_PASSWORD}@db:5432/reports
+      OIDC_ISSUER: https://sso.by.vincent.mahn.ke/realms/sso.by.vincent.mahn.ke
+      OIDC_CLIENT_ID: ${OAUTH_CLIENT_ID}
+    ports:
+      - "127.0.0.1:8081:8080"
+
+  app:
+    build: ./app
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:8080
+      OIDC_ISSUER: https://sso.by.vincent.mahn.ke/realms/sso.by.vincent.mahn.ke
+      OIDC_CLIENT_ID: ${OAUTH_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET}
+      OIDC_PROVIDER_NAME: ${OAUTH_NAME}
+      APP_BASE_URL: http://localhost:8082
+      SESSION_SECRET: ${SESSION_SECRET}
+      ADMIN_USERNAME: ${REPORTS_ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${REPORTS_ADMIN_PASSWORD}
+    ports:
+      - "127.0.0.1:8082:8080"
+
+  jobs:
+    build: ./jobs
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+      garmin:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://reports:${DB_PASSWORD}@db:5432/reports
+      API_INTERNAL_URL: http://api:8080
+      GARMIN_URL: http://garmin:8080
+      MFP_COOKIE: ${MFP_COOKIE}
+      FITX_EMAIL: ${FITX_EMAIL}
+      FITX_PASSWORD: ${FITX_PASSWORD}
+    ports:
+      - "127.0.0.1:8083:8080"
+
+  garmin:
+    build: ./garmin
+    restart: unless-stopped
+    environment:
+      GARMIN_EMAIL: ${GARMIN_EMAIL}
+      GARMIN_PASSWORD: ${GARMIN_PASSWORD}
+
+volumes:
+  postgres_data:

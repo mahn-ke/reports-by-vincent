@@ -1,0 +1,66 @@
+{{define "title"}}Body{{end}}
+{{define "content"}}
+<h2 class="mb-4">Body Measurements</h2>
+<div class="card mb-4">
+  <div class="card-body">
+    <canvas id="bodyChart" height="80"></canvas>
+  </div>
+</div>
+<div class="table-responsive">
+  <table class="table table-sm table-striped table-hover align-middle">
+    <thead class="table-dark">
+      <tr>
+        <th>Date</th>
+        <th class="text-end">Weight (kg)</th>
+        <th class="text-end">BMI</th>
+        <th class="text-end">Body Fat %</th>
+        <th class="text-end">Muscle Mass (kg)</th>
+        <th class="text-end">Bone Mass (kg)</th>
+        <th class="text-end">Body Water %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Entries}}
+      <tr>
+        <td>{{.MeasuredAt.Format "2006-01-02"}}</td>
+        <td class="text-end">{{printf "%.1f" .Weight}}</td>
+        <td class="text-end">{{printf "%.1f" .BMI}}</td>
+        <td class="text-end">{{printf "%.1f" .BodyFat}}</td>
+        <td class="text-end">{{printf "%.1f" .SkeletalMuscleMass}}</td>
+        <td class="text-end">{{printf "%.1f" .BoneMass}}</td>
+        <td class="text-end">{{printf "%.1f" .BodyWater}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="7" class="text-center text-body-secondary">No data yet</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{define "scripts"}}
+<script>
+const labels    = {{.Labels}};
+const weights   = {{.Weights}};
+const bodyFats  = {{.BodyFats}};
+const muscleMass = {{.MuscleMass}};
+new Chart(document.getElementById('bodyChart'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      { label: 'Weight (kg)',       data: weights,    yAxisID: 'y',  tension: 0.2, borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.1)', fill: true },
+      { label: 'Body Fat %',        data: bodyFats,   yAxisID: 'y2', tension: 0.2, borderColor: '#f59e0b' },
+      { label: 'Muscle Mass (kg)',  data: muscleMass, yAxisID: 'y',  tension: 0.2, borderColor: '#10b981' },
+    ]
+  },
+  options: {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      y:  { type: 'linear', position: 'left',  title: { display: true, text: 'kg' } },
+      y2: { type: 'linear', position: 'right', title: { display: true, text: '%' }, grid: { drawOnChartArea: false } }
+    }
+  }
+});
+</script>
+{{end}}

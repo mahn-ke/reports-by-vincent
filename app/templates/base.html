@@ -1,0 +1,31 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{block "title" .}}Reports{{end}} — reports.by.vincent</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/halfmoon@2.0.2/css/halfmoon.min.css">
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg sticky-top bg-body-tertiary border-bottom">
+    <div class="container-fluid">
+      <a class="navbar-brand fw-semibold" href="/">📊 Reports</a>
+      <div class="navbar-nav ms-3">
+        <a class="nav-link" href="/nutrition">Nutrition</a>
+        <a class="nav-link" href="/training">Training</a>
+        <a class="nav-link" href="/body">Body</a>
+      </div>
+      <div class="navbar-nav ms-auto">
+        <a class="nav-link text-danger-emphasis" href="/logout">Logout</a>
+      </div>
+    </div>
+  </nav>
+  <main class="container-fluid py-4">
+    {{block "content" .}}{{end}}
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  {{block "scripts" .}}{{end}}
+</body>
+</html>
+{{end}}

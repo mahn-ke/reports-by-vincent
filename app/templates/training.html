@@ -1,0 +1,35 @@
+{{define "title"}}Training{{end}}
+{{define "content"}}
+<h2 class="mb-1">Training Days</h2>
+<p class="text-body-secondary mb-4">{{len .Entries}} sessions recorded</p>
+<div class="table-responsive">
+  <table class="table table-sm table-striped table-hover align-middle">
+    <thead class="table-dark">
+      <tr><th>#</th><th>Date</th></tr>
+    </thead>
+    <tbody>
+      {{range $i, $e := .Entries}}
+      <tr>
+        <td class="text-body-secondary">{{add $i 1}}</td>
+        <td>{{$e.Date}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="2" class="text-center text-body-secondary">No data yet</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{define "scripts"}}
+<script>
+// highlight rows in the last 30 days
+const cutoff = new Date();
+cutoff.setDate(cutoff.getDate() - 30);
+document.querySelectorAll('tbody tr').forEach(row => {
+  const dateCell = row.cells[1];
+  if (dateCell && new Date(dateCell.textContent) >= cutoff) {
+    row.classList.add('table-success');
+  }
+});
+</script>
+{{end}}

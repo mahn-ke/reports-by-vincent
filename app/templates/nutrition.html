@@ -1,0 +1,60 @@
+{{define "title"}}Nutrition{{end}}
+{{define "content"}}
+<h2 class="mb-4">Nutrition</h2>
+<div class="card mb-4">
+  <div class="card-body">
+    <canvas id="calChart" height="80"></canvas>
+  </div>
+</div>
+<div class="table-responsive">
+  <table class="table table-sm table-striped table-hover align-middle">
+    <thead class="table-dark">
+      <tr>
+        <th>Date</th><th class="text-end">Calories</th><th class="text-end">Carbs (g)</th><th class="text-end">Fat (g)</th><th class="text-end">Protein (g)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Entries}}
+      <tr>
+        <td>{{.Date}}</td>
+        <td class="text-end">{{printf "%.1f" .Calories}}</td>
+        <td class="text-end">{{printf "%.1f" .Carbs}}</td>
+        <td class="text-end">{{printf "%.1f" .Fat}}</td>
+        <td class="text-end">{{printf "%.1f" .Protein}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" class="text-center text-body-secondary">No data yet</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{define "scripts"}}
+<script>
+const labels   = {{.Labels}};
+const calories = {{.Calories}};
+const carbs    = {{.Carbs}};
+const fat      = {{.Fat}};
+const protein  = {{.Protein}};
+new Chart(document.getElementById('calChart'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      { label: 'Calories', data: calories, yAxisID: 'y', tension: 0.2, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', fill: true },
+      { label: 'Carbs (g)', data: carbs,   yAxisID: 'y2', tension: 0.2, borderColor: '#3b82f6' },
+      { label: 'Fat (g)',   data: fat,     yAxisID: 'y2', tension: 0.2, borderColor: '#ef4444' },
+      { label: 'Protein (g)', data: protein, yAxisID: 'y2', tension: 0.2, borderColor: '#10b981' },
+    ]
+  },
+  options: {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      y:  { type: 'linear', position: 'left',  title: { display: true, text: 'kcal' } },
+      y2: { type: 'linear', position: 'right', title: { display: true, text: 'g' }, grid: { drawOnChartArea: false } }
+    }
+  }
+});
+</script>
+{{end}}
