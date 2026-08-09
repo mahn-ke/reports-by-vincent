@@ -429,6 +429,8 @@ func (a *App) handleBody(w http.ResponseWriter, r *http.Request) {
 type workoutPageData struct {
 	// JSON object: {exerciseId: {date: totalKg, ...}, ...}
 	ExerciseDailyTotals template.JS
+	// JSON object: {exerciseId: {date: maxWeightKg, ...}, ...}
+	ExerciseDailyMax template.JS
 	// JSON object: {exerciseId: "name", ...}
 	ExerciseNames template.JS
 	// JSON array: [{date: "YYYY-MM-DD", weight: float}, ...]
@@ -449,13 +451,18 @@ func (a *App) handleWorkout(w http.ResponseWriter, r *http.Request) {
 		nameMap[e.ID] = e.Name
 	}
 
-	// Aggregate: exerciseID -> date -> sum(weight * repetitions)
+	// Aggregate: exerciseID -> date -> sum(weight * repetitions) and max(weight)
 	totals := make(map[int]map[string]float64)
+	maxW := make(map[int]map[string]float64)
 	for _, e := range entries {
 		if _, ok := totals[e.ExerciseID]; !ok {
 			totals[e.ExerciseID] = make(map[string]float64)
+			maxW[e.ExerciseID] = make(map[string]float64)
 		}
 		totals[e.ExerciseID][e.Date] += e.Weight * float64(e.Repetitions)
+		if e.Weight > maxW[e.ExerciseID][e.Date] {
+			maxW[e.ExerciseID][e.Date] = e.Weight
+		}
 	}
 
 	// Build weight points: [{date, weight}, ...]
@@ -471,10 +478,12 @@ func (a *App) handleWorkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	totalsJ, _ := json.Marshal(totals)
+	maxWJ, _ := json.Marshal(maxW)
 	namesJ, _ := json.Marshal(nameMap)
 	wptsJ, _ := json.Marshal(wpts)
 	renderTemplate(w, "workout", workoutPageData{
 		ExerciseDailyTotals: template.JS(totalsJ),
+		ExerciseDailyMax:    template.JS(maxWJ),
 		ExerciseNames:       template.JS(namesJ),
 		WeightPoints:        template.JS(wptsJ),
 	})
