@@ -65,6 +65,18 @@ type BodyMeasurement struct {
 	BodyWater          float64   `json:"body_water"`
 }
 
+type WorkoutExercise struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type WorkoutLogEntry struct {
+	ExerciseID  int     `json:"exercise_id"`
+	Date        string  `json:"date"`
+	Weight      float64 `json:"weight"`
+	Repetitions int     `json:"repetitions"`
+}
+
 // --- Template rendering ---
 
 var funcMap = template.FuncMap{
@@ -414,6 +426,42 @@ func (a *App) handleBody(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type workoutPageData struct {
+	// JSON object: {exerciseId: {date: totalKg, ...}, ...}
+	ExerciseDailyTotals template.JS
+	// JSON object: {exerciseId: "name", ...}
+	ExerciseNames template.JS
+}
+
+func (a *App) handleWorkout(w http.ResponseWriter, r *http.Request) {
+	var exercises []WorkoutExercise
+	var entries []WorkoutLogEntry
+	a.apiGet(r.Context(), "/internal/workout/exercises", &exercises)
+	a.apiGet(r.Context(), "/internal/workout/entries", &entries)
+
+	// Build name map
+	nameMap := make(map[int]string, len(exercises))
+	for _, e := range exercises {
+		nameMap[e.ID] = e.Name
+	}
+
+	// Aggregate: exerciseID -> date -> sum(weight * repetitions)
+	totals := make(map[int]map[string]float64)
+	for _, e := range entries {
+		if _, ok := totals[e.ExerciseID]; !ok {
+			totals[e.ExerciseID] = make(map[string]float64)
+		}
+		totals[e.ExerciseID][e.Date] += e.Weight * float64(e.Repetitions)
+	}
+
+	totalsJ, _ := json.Marshal(totals)
+	namesJ, _ := json.Marshal(nameMap)
+	renderTemplate(w, "workout", workoutPageData{
+		ExerciseDailyTotals: template.JS(totalsJ),
+		ExerciseNames:       template.JS(namesJ),
+	})
+}
+
 // --- main ---
 
 func main() {
@@ -486,6 +534,7 @@ func main() {
 		r.Get("/nutrition", app.handleNutrition)
 		r.Get("/training", app.handleTraining)
 		r.Get("/body", app.handleBody)
+		r.Get("/workout", app.handleWorkout)
 	})
 
 	slog.Info("App listening on :8080")

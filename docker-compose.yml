@@ -74,6 +74,8 @@ services:
       MFP_COOKIE: ${MFP_COOKIE}
       FITX_EMAIL: ${FITX_EMAIL}
       FITX_PASSWORD: ${FITX_PASSWORD}
+      WGER_URL: https://fitness.by.vincent.mahn.ke
+      WGER_TOKEN: ${WGER_TOKEN}
     ports:
       - "127.0.0.1:8083:8080"
 

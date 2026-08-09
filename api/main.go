@@ -43,6 +43,10 @@ func main() {
 		r.Post("/training", h.UpsertTraining)
 		r.Get("/body", h.ListBody)
 		r.Post("/body", h.UpsertBody)
+		r.Get("/workout/exercises", h.ListWorkoutExercises)
+		r.Post("/workout/exercises", h.UpsertWorkoutExercises)
+		r.Get("/workout/entries", h.ListWorkoutLogEntries)
+		r.Post("/workout/entries", h.UpsertWorkoutLogEntries)
 	})
 
 	// OIDC-protected routes for external clients. Skipped if OIDC_ISSUER is not configured.
@@ -59,6 +63,8 @@ func main() {
 			r.Get("/nutrition", h.ListNutrition)
 			r.Get("/training", h.ListTraining)
 			r.Get("/body", h.ListBody)
+			r.Get("/workout/exercises", h.ListWorkoutExercises)
+			r.Get("/workout/entries", h.ListWorkoutLogEntries)
 		})
 	} else {
 		slog.Warn("OIDC_ISSUER not set — /api/* routes disabled")

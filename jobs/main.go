@@ -54,6 +54,9 @@ func main() {
 	if os.Getenv("FITX_EMAIL") == "" || os.Getenv("FITX_PASSWORD") == "" {
 		slog.Warn("FITX_EMAIL/FITX_PASSWORD not set — FitX job will be a no-op")
 	}
+	if os.Getenv("WGER_TOKEN") == "" {
+		slog.Warn("WGER_TOKEN not set — wger job will be a no-op")
+	}
 
 	workerPool := river.NewWorkers()
 	river.AddWorker(workerPool, &workers.MyFitnessPalWorker{
@@ -67,6 +70,11 @@ func main() {
 	})
 	river.AddWorker(workerPool, &workers.GarminWorker{
 		GarminURL:  garminURL,
+		APIBaseURL: apiURL,
+	})
+	river.AddWorker(workerPool, &workers.WgerWorker{
+		WgerURL:    os.Getenv("WGER_URL"),
+		WgerToken:  os.Getenv("WGER_TOKEN"),
 		APIBaseURL: apiURL,
 	})
 
@@ -84,6 +92,11 @@ func main() {
 		river.NewPeriodicJob(
 			river.PeriodicInterval(24*time.Hour),
 			func() (river.JobArgs, *river.InsertOpts) { return workers.GarminArgs{}, nil },
+			&river.PeriodicJobOpts{RunOnStart: true},
+		),
+		river.NewPeriodicJob(
+			river.PeriodicInterval(24*time.Hour),
+			func() (river.JobArgs, *river.InsertOpts) { return workers.WgerArgs{}, nil },
 			&river.PeriodicJobOpts{RunOnStart: true},
 		),
 	}

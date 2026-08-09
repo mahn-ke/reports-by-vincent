@@ -1,0 +1,284 @@
+{{define "title"}}Workout{{end}}
+{{define "content"}}
+<h2 class="mb-3">Workout – Exercise Volume</h2>
+<div class="mb-2">
+  <label class="me-3">
+    <input type="checkbox" id="absolute-dates-toggle" class="form-check-input me-1" />
+    Shared date range for all charts
+  </label>
+  <label>
+    <input type="checkbox" id="overview-stacked-toggle" class="form-check-input me-1" />
+    Stacked overview
+  </label>
+</div>
+<div class="card mb-4" style="min-height:340px">
+  <div class="card-body d-flex flex-column">
+    <h6 class="card-subtitle text-body-secondary mb-2" id="overview-card-title">Selected exercises overlay</h6>
+    <canvas id="overview-canvas" style="flex:1"></canvas>
+  </div>
+</div>
+<div id="charts"></div>
+{{end}}
+{{define "scripts"}}
+<script>
+// Data injected from Go
+const EXERCISE_DAILY_TOTALS = {{.ExerciseDailyTotals}};
+const EXERCISE_NAMES        = {{.ExerciseNames}};
+
+const COLORS = [
+  '#6c63ff','#ff6584','#43e97b','#f9ca24','#30cfd0',
+  '#a18cd1','#fd7014','#00c9ff','#e040fb','#76ff03'
+];
+
+const MUSCLE_GROUPS = ['Chest','Back','Quads','Hamstrings','Delts','Biceps','Triceps','Other'];
+
+function getMuscleGroup(name) {
+  const n = name.toLowerCase();
+  if (/hamstring|leg\s*curl|lying\s*curl|seated\s*curl|\brdl\b|romanian|stiff[\s-]?leg|nordic|good\s*morning/.test(n)) return 'Hamstrings';
+  if (/\bsquat|leg\s*press|leg\s*ext|\bquad|\blunge|hack\s*squat|split\s*squat|front\s*squat/.test(n)) return 'Quads';
+  if (/\bbicep|hammer\s*curl|\bcurl\b|preacher|chin[\s-]?up/.test(n)) return 'Biceps';
+  if (/\bchest|bench\s*press|\bbench\b|\bpec\b|fl[yi]e?s?|push[\s-]?up|cable\s*cross|incline\s*press|decline\s*press/.test(n)) return 'Chest';
+  if (/\brow\b|\brows\b|pull[\s-]?down|lat\s*pull|\blats?\b|deadlift|\bback\b|pull[\s-]?up|face\s*pull|\bshrug|t[\s-]?bar/.test(n)) return 'Back';
+  if (/shoulder|lateral\s*raise|front\s*raise|\bdelt|military|overhead\s*press|\bohp\b|arnold|upright\s*row/.test(n)) return 'Delts';
+  if (/tricep|pushdown|skull|close[\s-]?grip|overhead.*ext|\bdip/.test(n)) return 'Triceps';
+  return 'Other';
+}
+
+// Keys are strings from JSON
+const allExerciseIds = Object.keys(EXERCISE_DAILY_TOTALS);
+
+let overviewChart = null;
+let selectedExerciseIds = new Set();
+
+// ── date helpers ──
+
+function findGlobalDateBounds(ids) {
+  let minDate = null, maxDate = null;
+  for (const id of ids) {
+    for (const date of Object.keys(EXERCISE_DAILY_TOTALS[id] || {})) {
+      if (!minDate || date < minDate) minDate = date;
+      if (!maxDate || date > maxDate) maxDate = date;
+    }
+  }
+  return { minDate, maxDate };
+}
+
+function buildDateRange(startDate, endDate) {
+  if (!startDate || !endDate) return [];
+  const labels = [];
+  const cursor = new Date(startDate + 'T00:00:00');
+  const last   = new Date(endDate   + 'T00:00:00');
+  while (cursor <= last) {
+    labels.push(cursor.toISOString().slice(0, 10));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return labels;
+}
+
+// ── overview chart ──
+
+async function renderOverviewChart() {
+  const title = document.querySelector('#overview-card-title');
+  const canvas = document.getElementById('overview-canvas');
+  const stackedMode = document.getElementById('overview-stacked-toggle').checked;
+  const selectedIds = [...selectedExerciseIds];
+
+  if (overviewChart) { overviewChart.destroy(); overviewChart = null; }
+
+  if (selectedIds.length === 0) {
+    title.textContent = 'Selected exercises overlay (select a chart below)';
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  const { minDate, maxDate } = (() => {
+    let mn = null, mx = null;
+    for (const id of selectedIds) {
+      for (const d of Object.keys(EXERCISE_DAILY_TOTALS[id] || {})) {
+        if (!mn || d < mn) mn = d;
+        if (!mx || d > mx) mx = d;
+      }
+    }
+    return { minDate: mn, maxDate: mx };
+  })();
+  const labels = buildDateRange(minDate, maxDate);
+  const datasets = [];
+
+  for (let i = 0; i < selectedIds.length; i++) {
+    const id = selectedIds[i];
+    const dailyTotals = EXERCISE_DAILY_TOTALS[id];
+    if (!dailyTotals) continue;
+    const name = EXERCISE_NAMES[id] || `Exercise ${id}`;
+    const color = COLORS[i % COLORS.length];
+    datasets.push({
+      label: name,
+      data: labels.map(d => (d in dailyTotals ? dailyTotals[d] : null)),
+      borderColor: color,
+      backgroundColor: color + '66',
+      stack: stackedMode ? 'sel' : undefined,
+      borderWidth: 1, borderRadius: 2, borderSkipped: false,
+    });
+  }
+
+  title.textContent = `Selected exercises ${stackedMode ? 'stacked' : 'overlay'} (${datasets.length})`;
+  overviewChart = new Chart(canvas, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false, axis: 'x' },
+      plugins: {
+        legend: { labels: { color: '#aaa' } },
+        tooltip: {
+          mode: 'index', intersect: false,
+          filter: item => item.parsed.y != null,
+          callbacks: { label: ctx => ctx.parsed.y == null ? null : `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} kg` }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#777', maxTicksLimit: 16 }, grid: { color: '#2a2a36' }, stacked: stackedMode },
+        y: { ticks: { color: '#777', callback: v => `${v} kg` }, grid: { color: '#2a2a36' }, stacked: stackedMode, beginAtZero: true }
+      }
+    }
+  });
+}
+
+// ── per-exercise chart ──
+
+function renderExerciseChart(id, name, dailyTotals, colorIndex, absoluteLabels, container) {
+  const sortedDates = Object.keys(dailyTotals).sort();
+  const valueByDate = Object.fromEntries(sortedDates.map(d => [d, dailyTotals[d]]));
+  const labels = absoluteLabels || sortedDates;
+  const data   = absoluteLabels ? labels.map(d => (d in valueByDate ? valueByDate[d] : null)) : sortedDates.map(d => dailyTotals[d]);
+  const color  = COLORS[colorIndex % COLORS.length];
+
+  const card = document.createElement('div');
+  card.className = 'card chart-card' + (selectedExerciseIds.has(String(id)) ? ' border-primary' : '');
+  card.dataset.exerciseId = String(id);
+  card.style.cursor = 'pointer';
+
+  const body = document.createElement('div');
+  body.className = 'card-body d-flex flex-column';
+  body.style.height = '300px';
+
+  const h = document.createElement('h6');
+  h.className = 'card-subtitle text-body-secondary mb-2';
+  h.textContent = name;
+  body.appendChild(h);
+
+  const canvas = document.createElement('canvas');
+  canvas.style.flex = '1';
+  body.appendChild(canvas);
+  card.appendChild(body);
+  container.appendChild(card);
+
+  new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Total weight moved (kg)',
+        data,
+        borderColor: color,
+        backgroundColor: color + '22',
+        borderWidth: 2,
+        pointRadius: 3,
+        tension: 0.3,
+        fill: true,
+        spanGaps: !!absoluteLabels,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y.toFixed(1)} kg` } }
+      },
+      scales: {
+        x: { ticks: { color: '#777', maxTicksLimit: 10 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { ticks: { color: '#777', callback: v => `${v} kg` }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: true }
+      }
+    }
+  });
+
+  card.addEventListener('click', async () => {
+    const sid = String(id);
+    if (selectedExerciseIds.has(sid)) {
+      selectedExerciseIds.delete(sid);
+      card.classList.remove('border-primary');
+    } else {
+      selectedExerciseIds.add(sid);
+      card.classList.add('border-primary');
+    }
+    await renderOverviewChart();
+  });
+}
+
+// ── main render ──
+
+function renderAll(useAbsoluteDates) {
+  const chartsEl = document.getElementById('charts');
+  chartsEl.innerHTML = '';
+
+  const { minDate, maxDate } = findGlobalDateBounds(allExerciseIds);
+  const absoluteLabels = useAbsoluteDates ? buildDateRange(minDate, maxDate) : null;
+
+  // classify exercises into muscle groups
+  const grouped = {};
+  let colorIndex = 0;
+  for (const id of allExerciseIds) {
+    const name  = EXERCISE_NAMES[id] || `Exercise ${id}`;
+    const group = getMuscleGroup(name);
+    (grouped[group] = grouped[group] || []).push({ id, name });
+  }
+
+  for (const group of MUSCLE_GROUPS) {
+    const list = grouped[group];
+    if (!list || list.length === 0) continue;
+
+    const section = document.createElement('div');
+    section.className = 'mb-4';
+
+    const header = document.createElement('h5');
+    header.className = 'text-uppercase text-body-secondary border-bottom pb-1 mb-3';
+    header.style.fontSize = '0.75rem';
+    header.style.letterSpacing = '0.1em';
+    header.textContent = group;
+    section.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.className = 'row g-3';
+    section.appendChild(grid);
+    chartsEl.appendChild(section);
+
+    for (const { id, name } of list) {
+      const dailyTotals = EXERCISE_DAILY_TOTALS[id];
+      if (!dailyTotals || Object.keys(dailyTotals).length === 0) continue;
+      const col = document.createElement('div');
+      col.className = 'col-12 col-md-6 col-xl-3';
+      grid.appendChild(col);
+      renderExerciseChart(id, name, dailyTotals, colorIndex++, absoluteLabels, col);
+    }
+  }
+
+  renderOverviewChart();
+}
+
+// ── init ──
+
+if (allExerciseIds.length === 0) {
+  document.getElementById('charts').innerHTML =
+    '<p class="text-body-secondary">No workout data yet — the wger sync job will populate this.</p>';
+} else {
+  const absToggle     = document.getElementById('absolute-dates-toggle');
+  const stackedToggle = document.getElementById('overview-stacked-toggle');
+
+  absToggle.addEventListener('change', () => renderAll(absToggle.checked));
+  stackedToggle.addEventListener('change', () => renderOverviewChart());
+
+  renderAll(false);
+}
+</script>
+{{end}}
