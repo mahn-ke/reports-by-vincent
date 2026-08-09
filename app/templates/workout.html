@@ -510,7 +510,7 @@ function buildDateRange(startDate, endDate) {
   const cursor = new Date(startDate + 'T00:00:00');
   const last   = new Date(endDate   + 'T00:00:00');
   while (cursor <= last) {
-    labels.push(cursor.toISOString().slice(0, 10));
+    labels.push(formatLocalDate(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
   return labels;
