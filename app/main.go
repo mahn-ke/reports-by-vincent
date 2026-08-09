@@ -463,16 +463,29 @@ func (a *App) handleWorkout(w http.ResponseWriter, r *http.Request) {
 		nameMap[e.ID] = e.Name
 	}
 
-	// Aggregate: exerciseID -> date -> sum(weight * repetitions) and max(weight)
+	// Aggregate:
+	// - totals: exerciseID -> date -> sum(weight * repetitions)
+	// - maxW: highest weight for which a full set was completed
+	//   ("full set" = max repetitions achieved for that exercise on that day)
 	totals := make(map[int]map[string]float64)
 	maxW := make(map[int]map[string]float64)
+	fullSetReps := make(map[int]map[string]int)
 	for _, e := range entries {
 		if _, ok := totals[e.ExerciseID]; !ok {
 			totals[e.ExerciseID] = make(map[string]float64)
 			maxW[e.ExerciseID] = make(map[string]float64)
+			fullSetReps[e.ExerciseID] = make(map[string]int)
 		}
 		totals[e.ExerciseID][e.Date] += e.Weight * float64(e.Repetitions)
-		if e.Weight > maxW[e.ExerciseID][e.Date] {
+		if e.Repetitions > fullSetReps[e.ExerciseID][e.Date] {
+			fullSetReps[e.ExerciseID][e.Date] = e.Repetitions
+		}
+	}
+	for _, e := range entries {
+		if e.Repetitions <= 0 {
+			continue
+		}
+		if e.Repetitions == fullSetReps[e.ExerciseID][e.Date] && e.Weight > maxW[e.ExerciseID][e.Date] {
 			maxW[e.ExerciseID][e.Date] = e.Weight
 		}
 	}
