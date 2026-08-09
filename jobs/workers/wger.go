@@ -31,7 +31,7 @@ type wgerWorkoutLog struct {
 	Exercise    int     `json:"exercise"`
 	Date        string  `json:"date"`
 	Weight      string  `json:"weight"`
-	Repetitions int     `json:"repetitions"`
+	Repetitions string  `json:"repetitions"`
 	RepsUnit    int     `json:"reps_unit"`
 	WeightUnit  int     `json:"weight_unit"`
 }
@@ -94,11 +94,13 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 	for _, l := range logs {
 		weight := 0.0
 		fmt.Sscanf(l.Weight, "%f", &weight)
+		reps := 0
+		fmt.Sscanf(l.Repetitions, "%d", &reps)
 		entries = append(entries, map[string]any{
 			"exercise_id":  l.Exercise,
 			"date":         l.Date,
 			"weight":       weight,
-			"repetitions":  l.Repetitions,
+			"repetitions":  reps,
 		})
 	}
 
