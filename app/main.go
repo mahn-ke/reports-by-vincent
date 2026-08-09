@@ -445,7 +445,7 @@ type workoutPageData struct {
 	ExerciseDailyMax template.JS
 	// JSON object: {exerciseId: "name", ...}
 	ExerciseNames template.JS
-	// JSON array: [{date: "YYYY-MM-DD", weight: float}, ...]
+	// JSON array: [{date: "YYYY-MM-DD", weight: float, bodyFat: float}, ...]
 	WeightPoints template.JS
 }
 
@@ -490,15 +490,20 @@ func (a *App) handleWorkout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build weight points: [{date, weight}, ...]
+	// Build body metric points: [{date, weight, bodyFat}, ...]
 	type weightPoint struct {
-		Date   string  `json:"date"`
-		Weight float64 `json:"weight"`
+		Date    string  `json:"date"`
+		Weight  float64 `json:"weight"`
+		BodyFat float64 `json:"bodyFat"`
 	}
 	wpts := make([]weightPoint, 0, len(body))
 	for _, b := range body {
-		if b.Weight > 0 {
-			wpts = append(wpts, weightPoint{Date: b.MeasuredAt.Format("2006-01-02"), Weight: b.Weight})
+		if b.Weight > 0 || b.BodyFat > 0 {
+			wpts = append(wpts, weightPoint{
+				Date:    b.MeasuredAt.Format("2006-01-02"),
+				Weight:  b.Weight,
+				BodyFat: b.BodyFat,
+			})
 		}
 	}
 

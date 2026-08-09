@@ -26,13 +26,19 @@
         <input type="radio" class="btn-check" name="chart-mode" id="mode-performance" autocomplete="off" />
         <label class="btn btn-outline-secondary" for="mode-performance">Performance Index</label>
       </div>
-      <div class="btn-group btn-group-sm" role="group" aria-label="Performance baseline workouts">
+      <div id="performance-window-controls" class="btn-group btn-group-sm" role="group" aria-label="Performance baseline workouts">
         <input type="radio" class="btn-check" name="performance-window" id="perf-window-4" autocomplete="off" />
         <label class="btn btn-outline-secondary" for="perf-window-4">Perf 4</label>
         <input type="radio" class="btn-check" name="performance-window" id="perf-window-6" autocomplete="off" checked />
         <label class="btn btn-outline-secondary" for="perf-window-6">Perf 6</label>
         <input type="radio" class="btn-check" name="performance-window" id="perf-window-8" autocomplete="off" />
         <label class="btn btn-outline-secondary" for="perf-window-8">Perf 8</label>
+      </div>
+      <div class="btn-group btn-group-sm" role="group" aria-label="Background bars mode">
+        <input type="radio" class="btn-check" name="background-mode" id="bg-bodyweight" autocomplete="off" checked />
+        <label class="btn btn-outline-secondary" for="bg-bodyweight">Bodyweight</label>
+        <input type="radio" class="btn-check" name="background-mode" id="bg-bfp" autocomplete="off" />
+        <label class="btn btn-outline-secondary" for="bg-bfp">BFP</label>
       </div>
       <div class="btn-group btn-group-sm" role="group" aria-label="Grouping mode">
         <input type="radio" class="btn-check" name="group-mode" id="group-recents" autocomplete="off" checked />
@@ -210,6 +216,12 @@ function metricTickLabel(value) {
   return `${value} kg`;
 }
 
+function syncPerformanceWindowVisibility() {
+  const controls = document.getElementById('performance-window-controls');
+  if (!controls) return;
+  controls.style.display = currentMetricMode() === 'performance' ? '' : 'none';
+}
+
 function activeData() {
   const start = getSelectedStartDate();
   const mode = currentMetricMode();
@@ -227,42 +239,62 @@ function groupingMode() {
   return document.getElementById('group-recents').checked ? 'recents' : 'muscle';
 }
 
-// Pre-process weight points with timestamps for interpolation
-const weightPoints = WEIGHT_POINTS_RAW.map(p => ({
+// Pre-process body metrics with timestamps for interpolation
+const bodyMetricPoints = WEIGHT_POINTS_RAW.map(p => ({
   date: p.date,
-  weight: p.weight,
+  weight: typeof p.weight === 'number' ? p.weight : null,
+  bodyFat: typeof p.bodyFat === 'number' ? p.bodyFat : null,
   ts: new Date(p.date + 'T12:00:00').getTime(),
 }));
 
-function interpolateWeight(dateStr) {
-  if (weightPoints.length === 0) return null;
+function currentBackgroundMetricMode() {
+  return document.getElementById('bg-bfp')?.checked ? 'bfp' : 'bodyweight';
+}
+
+function backgroundMetricKey() {
+  return currentBackgroundMetricMode() === 'bfp' ? 'bodyFat' : 'weight';
+}
+
+function backgroundMetricLabel() {
+  return currentBackgroundMetricMode() === 'bfp' ? 'Body fat (%)' : 'Body weight (kg)';
+}
+
+function formatBackgroundMetricValue(value) {
+  if (value == null || Number.isNaN(value)) return '';
+  return currentBackgroundMetricMode() === 'bfp' ? `${value.toFixed(1)}%` : `${value.toFixed(1)} kg`;
+}
+
+function interpolateBodyMetric(dateStr, key) {
+  if (bodyMetricPoints.length === 0) return null;
   const ts = new Date(dateStr + 'T12:00:00').getTime();
   let before = null, after = null;
-  for (const p of weightPoints) {
+  for (const p of bodyMetricPoints) {
+    const value = p[key];
+    if (value == null || value <= 0) continue;
     if (p.ts <= ts) before = p;
     else if (!after) after = p;
   }
   if (before && after) {
     const t = (ts - before.ts) / (after.ts - before.ts);
-    return before.weight + t * (after.weight - before.weight);
+    return before[key] + t * (after[key] - before[key]);
   }
   if (before) {
-    const pts = weightPoints.filter(p => p.ts <= ts);
+    const pts = bodyMetricPoints.filter(p => p.ts <= ts && p[key] != null && p[key] > 0);
     if (pts.length >= 2) {
       const [p1, p2] = [pts[pts.length - 2], pts[pts.length - 1]];
       const dt = p2.ts - p1.ts;
-      if (dt > 0) return p2.weight + ((p2.weight - p1.weight) / dt) * (ts - p2.ts);
+      if (dt > 0) return p2[key] + ((p2[key] - p1[key]) / dt) * (ts - p2.ts);
     }
-    return before.weight;
+    return before[key];
   }
   if (after) {
-    const pts = weightPoints.filter(p => p.ts >= ts);
+    const pts = bodyMetricPoints.filter(p => p.ts >= ts && p[key] != null && p[key] > 0);
     if (pts.length >= 2) {
       const [p1, p2] = [pts[0], pts[1]];
       const dt = p2.ts - p1.ts;
-      if (dt > 0) return p1.weight + ((p2.weight - p1.weight) / dt) * (ts - p1.ts);
+      if (dt > 0) return p1[key] + ((p2[key] - p1[key]) / dt) * (ts - p1.ts);
     }
-    return after.weight;
+    return after[key];
   }
   return null;
 }
@@ -723,9 +755,9 @@ function renderExerciseChart(id, name, colorIndex, absoluteLabels, useLinearDate
   const seriesData = labels.map(d => (d in valueByDate ? valueByDate[d] : null));
   const color  = COLORS[colorIndex % COLORS.length];
 
-  // Body weight interpolated for each label date
-  const bodyWeightValues = labels.map(d => interpolateWeight(d));
-  const hasWeight = bodyWeightValues.some(v => v !== null);
+  // Interpolated body metric bars for each label date.
+  const bgMetricValues = labels.map(d => interpolateBodyMetric(d, backgroundMetricKey()));
+  const hasBackgroundMetric = bgMetricValues.some(v => v !== null);
 
   const card = document.createElement('div');
   const sid = String(id);
@@ -778,12 +810,13 @@ function renderExerciseChart(id, name, colorIndex, absoluteLabels, useLinearDate
   container.appendChild(card);
 
   const datasets = [];
-  if (hasWeight) {
+  if (hasBackgroundMetric) {
+    const isBfp = currentBackgroundMetricMode() === 'bfp';
     datasets.push({
       type: 'bar',
-      label: 'Body weight (kg)',
-      data: bodyWeightValues,
-      yAxisID: 'y-weight',
+      label: backgroundMetricLabel(),
+      data: bgMetricValues,
+      yAxisID: 'y-bg',
       backgroundColor: 'rgba(255,200,80,0.13)',
       borderColor: 'rgba(255,200,80,0.35)',
       borderWidth: 1,
@@ -834,13 +867,17 @@ function renderExerciseChart(id, name, colorIndex, absoluteLabels, useLinearDate
       beginAtZero: true,
     },
   };
-  if (hasWeight) {
-    const nonNull = bodyWeightValues.filter(v => v !== null);
+  if (hasBackgroundMetric) {
+    const nonNull = bgMetricValues.filter(v => v !== null);
     const minW = Math.min(...nonNull), maxW = Math.max(...nonNull);
-    const pad = Math.max((maxW - minW) * 0.5, 2);
-    scales['y-weight'] = {
+    const isBfp = currentBackgroundMetricMode() === 'bfp';
+    const pad = isBfp ? Math.max((maxW - minW) * 0.5, 0.8) : Math.max((maxW - minW) * 0.5, 2);
+    scales['y-bg'] = {
       position: 'right',
-      ticks: { color: 'rgba(255,200,80,0.55)', callback: v => v.toFixed(1) },
+      ticks: {
+        color: 'rgba(255,200,80,0.55)',
+        callback: v => isBfp ? `${Number(v).toFixed(1)}%` : Number(v).toFixed(1),
+      },
       grid: { drawOnChartArea: false },
       min: Math.floor(minW - pad),
       max: Math.ceil(maxW + pad),
@@ -862,7 +899,7 @@ function renderExerciseChart(id, name, colorIndex, absoluteLabels, useLinearDate
         tooltip: {
           callbacks: {
             label: ctx => {
-              if (ctx.dataset.yAxisID === 'y-weight') return ` Body weight: ${ctx.parsed.y.toFixed(1)} kg`;
+              if (ctx.dataset.yAxisID === 'y-bg') return ` ${ctx.dataset.label}: ${formatBackgroundMetricValue(ctx.parsed.y)}`;
               if (ctx.dataset.label.endsWith(' trend')) return ` Trend: ${formatPrimaryMetric(ctx.parsed.y)}`;
               return ` ${formatPrimaryMetric(ctx.parsed.y)}`;
             }
@@ -1021,6 +1058,7 @@ if (Object.keys(EXERCISE_DAILY_TOTALS).length === 0) {
   const stackedToggle = document.getElementById('overview-stacked-toggle');
   const modeInputs    = document.querySelectorAll('input[name="chart-mode"]');
   const perfWindowInputs = document.querySelectorAll('input[name="performance-window"]');
+  const backgroundModeInputs = document.querySelectorAll('input[name="background-mode"]');
   const groupInputs   = document.querySelectorAll('input[name="group-mode"]');
 
   rangeStartInput.min = FIRST_WORKOUT_DATE;
@@ -1055,13 +1093,18 @@ if (Object.keys(EXERCISE_DAILY_TOTALS).length === 0) {
   });
 
   applyPreset('all');
+  syncPerformanceWindowVisibility();
 
   absToggle.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked));
   linearToggle.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked));
   showHiddenToggle.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked));
   stackedToggle.addEventListener('change', () => renderOverviewChart());
-  modeInputs.forEach(r => r.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked)));
+  modeInputs.forEach(r => r.addEventListener('change', () => {
+    syncPerformanceWindowVisibility();
+    rerenderPreservingScroll(absToggle.checked);
+  }));
   perfWindowInputs.forEach(r => r.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked)));
+  backgroundModeInputs.forEach(r => r.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked)));
   groupInputs.forEach(r => r.addEventListener('change', () => rerenderPreservingScroll(absToggle.checked)));
 
   renderAll(false);
