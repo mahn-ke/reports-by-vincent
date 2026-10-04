@@ -3,7 +3,7 @@ module github.com/mahn-ke/reports-by-vincent/jobs
 go 1.25.0
 
 require (
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/riverqueue/river v0.43.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.43.0
 	riverqueue.com/riverui v0.17.0
