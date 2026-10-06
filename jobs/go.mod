@@ -4,8 +4,8 @@ go 1.26.0
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/riverqueue/river v0.48.0
-	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.48.0
+	github.com/riverqueue/river v0.49.0
+	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.49.0
 	riverqueue.com/riverui v0.20.0
 )
 
@@ -20,9 +20,9 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/riverqueue/apiframe v0.0.0-20251229202423-2b52ce1c482e // indirect
-	github.com/riverqueue/river/riverdriver v0.48.0 // indirect
-	github.com/riverqueue/river/rivershared v0.48.0 // indirect
-	github.com/riverqueue/river/rivertype v0.48.0 // indirect
+	github.com/riverqueue/river/riverdriver v0.49.0 // indirect
+	github.com/riverqueue/river/rivershared v0.49.0 // indirect
+	github.com/riverqueue/river/rivertype v0.49.0 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.2 // indirect
