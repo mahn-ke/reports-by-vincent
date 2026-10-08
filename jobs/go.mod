@@ -6,7 +6,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/riverqueue/river v0.49.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.49.0
-	riverqueue.com/riverui v0.20.0
+	riverqueue.com/riverui v0.21.0
 )
 
 require (
@@ -29,6 +29,6 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
