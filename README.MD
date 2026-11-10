@@ -22,3 +22,12 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d app nginx
 ```
 
 With this override active, edits in `app/templates/*.html` are picked up on refresh without rebuilding the app image.
+## PostgreSQL 18 upgrade
+
+PostgreSQL 18 cannot open the PostgreSQL 17 data directory, and its image
+expects a single mount at `/var/lib/postgresql`. The database therefore moves
+to the new `postgres18_data` volume. On the Docker host, run
+`.\scripts\Upgrade-Postgres18.ps1` from the checkout directly before deploying
+the `postgres:18` configuration. It stops the database and its writers, dumps
+PostgreSQL 17, restores into `reports_postgres18_data`, and verifies row counts.
+The old `reports_postgres_data` volume is left unchanged for rollback.

@@ -14,14 +14,15 @@ services:
       - "8082:80"
 
   db:
-    image: postgres:17
+    image: postgres:18
     restart: unless-stopped
     environment:
       POSTGRES_DB: reports
       POSTGRES_USER: reports
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Populated from the PostgreSQL 17 volume by scripts/Upgrade-Postgres18.ps1
+      - postgres18_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U reports"]
       interval: 5s
@@ -85,4 +86,4 @@ services:
       GARMIN_PASSWORD: ${GARMIN_PASSWORD}
 
 volumes:
-  postgres_data:
+  postgres18_data:
