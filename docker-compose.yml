@@ -29,6 +29,7 @@ services:
       retries: 10
 
   api:
+    image: ghcr.io/mahn-ke/reports-by-vincent/api:latest
     build: ./api
     restart: unless-stopped
     depends_on:
@@ -40,6 +41,7 @@ services:
       OIDC_CLIENT_ID: ${OAUTH_CLIENT_ID}
 
   app:
+    image: ghcr.io/mahn-ke/reports-by-vincent/app:latest
     build: ./app
     restart: unless-stopped
     depends_on:
@@ -54,6 +56,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
 
   jobs:
+    image: ghcr.io/mahn-ke/reports-by-vincent/jobs:latest
     build: ./jobs
     restart: unless-stopped
     depends_on:
@@ -76,6 +79,7 @@ services:
       - "127.0.0.1:8083:8080"
 
   garmin:
+    image: ghcr.io/mahn-ke/reports-by-vincent/garmin:latest
     build: ./garmin
     restart: unless-stopped
     environment:

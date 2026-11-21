@@ -5,9 +5,11 @@ Hosts the container serving [reports.by.vincent.mahn.ke](https://reports.by.vinc
 ## Container configuration
 
 The shared deployment workflow builds `docker-bake.hcl` and publishes
-`ghcr.io/mahn-ke/reports-by-vincent/nginx:latest` before running Compose.
-The image contains `nginx/nginx.conf`, so restarting NGINX does not require the
-runner checkout. Database data remains in its named volume.
+`ghcr.io/mahn-ke/reports-by-vincent/{nginx,app,api,jobs,garmin}:latest` before
+running Compose, which pulls them (`--pull always`). Compose never rebuilds
+`build:` services on deploy, so every service with code must be a bake target.
+The nginx image contains `nginx/nginx.conf`, so restarting NGINX does not require
+the runner checkout. Database data remains in its named volume.
 Deploy once to replace the old bind-mounted container. For local image builds,
 run `docker buildx bake --file docker-bake.hcl --load`.
 
