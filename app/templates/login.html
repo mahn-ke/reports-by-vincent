@@ -10,23 +10,13 @@
         <div class="alert alert-danger py-2">{{.Error}}</div>
         {{end}}
 
-        <form method="POST" action="/login">
-          <div class="mb-3">
-            <label class="form-label" for="username">Username</label>
-            <input class="form-control" id="username" name="username" type="text" required autocomplete="username">
-          </div>
-          <div class="mb-3">
-            <label class="form-label" for="password">Password</label>
-            <input class="form-control" id="password" name="password" type="password" required autocomplete="current-password">
-          </div>
-          <button class="btn btn-primary w-100" type="submit">Sign in</button>
-        </form>
-
         {{if .OIDCEnabled}}
-        <hr class="my-4">
-        <a class="btn btn-outline-secondary w-100" href="/oauth/login">
+        <a class="btn btn-primary w-100" href="/oauth/login">
           Continue with {{.ProviderName}}
         </a>
+        <p class="text-body-secondary small text-center mt-3 mb-0">Admin accounts only.</p>
+        {{else}}
+        <div class="alert alert-warning py-2 mb-0">Single sign-on is not configured.</div>
         {{end}}
       </div>
     </div>

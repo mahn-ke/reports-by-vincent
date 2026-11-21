@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -33,8 +32,6 @@ type App struct {
 	oauth2Config  *oauth2.Config
 	oidcVerifier  *oidc.IDTokenVerifier
 	apiURL        string
-	adminUsername string
-	adminPassword string
 	providerName  string
 	baseURL       string
 }
@@ -161,7 +158,9 @@ func (a *App) isAuthenticated(r *http.Request) bool {
 		return false
 	}
 	auth, _ := sess.Values["authenticated"].(bool)
-	return auth
+	authType, _ := sess.Values["auth_type"].(string)
+	// Only SSO sessions are valid; this also invalidates leftover sessions from the removed password login.
+	return auth && authType == "oidc"
 }
 
 func (a *App) requireAuth(next http.Handler) http.Handler {
@@ -191,29 +190,6 @@ func (a *App) handleLoginGet(w http.ResponseWriter, r *http.Request) {
 		ProviderName: a.providerName,
 		OIDCEnabled:  a.oauth2Config != nil,
 	})
-}
-
-func (a *App) handleLoginPost(w http.ResponseWriter, r *http.Request) {
-	username := r.FormValue("username")
-	password := r.FormValue("password")
-
-	uMatch := subtle.ConstantTimeCompare([]byte(username), []byte(a.adminUsername)) == 1
-	pMatch := subtle.ConstantTimeCompare([]byte(password), []byte(a.adminPassword)) == 1
-	if !uMatch || !pMatch {
-		renderTemplate(w, "login", loginPageData{
-			Error:        "Invalid username or password.",
-			ProviderName: a.providerName,
-			OIDCEnabled:  a.oauth2Config != nil,
-		})
-		return
-	}
-
-	sess, _ := a.store.Get(r, "session")
-	sess.Values["authenticated"] = true
-	sess.Values["username"] = username
-	sess.Values["auth_type"] = "basic"
-	sess.Save(r, w)
-	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (a *App) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
@@ -540,8 +516,6 @@ func main() {
 	app := &App{
 		store:         store,
 		apiURL:        os.Getenv("API_URL"),
-		adminUsername: os.Getenv("ADMIN_USERNAME"),
-		adminPassword: os.Getenv("ADMIN_PASSWORD"),
 		providerName:  os.Getenv("OIDC_PROVIDER_NAME"),
 		baseURL:       os.Getenv("APP_BASE_URL"),
 	}
@@ -549,7 +523,7 @@ func main() {
 		app.apiURL = "http://api:8080"
 	}
 	if app.baseURL == "" {
-		app.baseURL = "http://localhost:8082"
+		app.baseURL = "https://reports.by.vincent.mahn.ke"
 	}
 
 	issuer := os.Getenv("OIDC_ISSUER")
@@ -580,7 +554,6 @@ func main() {
 	r.Use(chimw.Recoverer)
 
 	r.Get("/login", app.handleLoginGet)
-	r.Post("/login", app.handleLoginPost)
 	r.Get("/oauth/login", app.handleOAuthLogin)
 	r.Get("/oauth/callback", app.handleOAuthCallback)
 	r.Get("/logout", app.handleLogout)

@@ -49,17 +49,17 @@ func main() {
 		r.Post("/workout/entries", h.UpsertWorkoutLogEntries)
 	})
 
-	// OIDC-protected routes for external clients. Skipped if OIDC_ISSUER is not configured.
+	// OIDC-protected, admin-only routes for external clients (exposed via nginx at /api/). Skipped if OIDC_ISSUER is not configured.
 	issuer := os.Getenv("OIDC_ISSUER")
 	clientID := os.Getenv("OIDC_CLIENT_ID")
 	if issuer != "" && clientID != "" {
-		verifier, err := apimw.NewOIDCVerifier(ctx, issuer, clientID)
+		verifier, err := apimw.NewOIDCVerifier(ctx, issuer)
 		if err != nil {
 			slog.Error("OIDC provider discovery failed", "err", err)
 			os.Exit(1)
 		}
 		r.Route("/api", func(r chi.Router) {
-			r.Use(apimw.OIDCMiddleware(verifier))
+			r.Use(apimw.OIDCMiddleware(verifier, clientID))
 			r.Get("/nutrition", h.ListNutrition)
 			r.Get("/training", h.ListTraining)
 			r.Get("/body", h.ListBody)
