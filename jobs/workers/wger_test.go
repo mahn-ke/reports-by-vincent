@@ -45,13 +45,27 @@ func TestDecodeWger27Shapes(t *testing.T) {
 func TestPlanDays(t *testing.T) {
 	days := []wgerDay{{ID: 4, Routine: 2, Name: "Pull"}, {ID: 5, Routine: 2, Name: "Full Body", IsRest: true}}
 	slots := []wgerSlot{{ID: 10, Day: 4}, {ID: 11, Day: 4}, {ID: 12, Day: 99}}
-	entries := []wgerSlotEntry{{Slot: 10, Exercise: 94}, {Slot: 11, Exercise: 158}, {Slot: 11, Exercise: 94}, {Slot: 12, Exercise: 1}}
-	got := planDays(days, slots, entries)
+	entries := []wgerSlotEntry{{ID: 100, Slot: 10, Exercise: 94}, {ID: 101, Slot: 11, Exercise: 158}, {ID: 102, Slot: 11, Exercise: 94}, {ID: 103, Slot: 12, Exercise: 1}}
+	four, five, six := 4, 5, 6
+	configs := []wgerSetsConfig{
+		{SlotEntry: 100, Iteration: 1, Value: &four, Operation: "r"},
+		{SlotEntry: 100, Iteration: 3, Value: &five, Operation: "r"},
+		{SlotEntry: 101, Iteration: 1, Value: &six, Operation: "r"},
+		{SlotEntry: 101, Iteration: 2, Value: &four, Operation: "a"}, // relative: not a planned count
+	}
+	got := planDays(days, slots, entries, configs)
 	if len(got) != 2 {
 		t.Fatalf("want 2 days, got %d", len(got))
 	}
 	if ids := got[0]["exercise_ids"].([]int); len(ids) != 2 || ids[0] != 94 || ids[1] != 158 {
 		t.Errorf("pull exercises = %v, want [94 158] (deduplicated, in slot order)", ids)
+	}
+	pe := got[0]["entries"].([]planEntry)
+	if len(pe) != 3 || pe[0].SlotEntryID != 100 || len(pe[0].Sets) != 2 || pe[0].Sets[1] != (planSets{Iteration: 3, Value: 5}) {
+		t.Errorf("pull entries = %+v", pe)
+	}
+	if len(pe[1].Sets) != 1 || pe[1].Sets[0].Value != 6 {
+		t.Errorf("relative config should be dropped: %+v", pe[1])
 	}
 	if ids := got[1]["exercise_ids"].([]int); len(ids) != 0 || got[1]["is_rest"] != true {
 		t.Errorf("rest day = %v", got[1])

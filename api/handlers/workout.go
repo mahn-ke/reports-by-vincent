@@ -17,22 +17,24 @@ type WorkoutExercise struct {
 }
 
 type WorkoutLogEntry struct {
-	ID          int     `json:"id"`
-	WgerID      *string `json:"wger_id,omitempty"`
-	SessionID   *string `json:"session_id,omitempty"`
-	ExerciseID  int     `json:"exercise_id"`
-	Date        string  `json:"date"`
-	Weight      float64 `json:"weight"`
-	Repetitions int     `json:"repetitions"`
+	ID          int        `json:"id"`
+	WgerID      *string    `json:"wger_id,omitempty"`
+	SessionID   *string    `json:"session_id,omitempty"`
+	LoggedAt    *time.Time `json:"logged_at,omitempty"`
+	ExerciseID  int        `json:"exercise_id"`
+	Date        string     `json:"date"`
+	Weight      float64    `json:"weight"`
+	Repetitions int        `json:"repetitions"`
 }
 
 type WorkoutLogEntryInput struct {
-	WgerID      string  `json:"wger_id"`
-	SessionID   *string `json:"session_id"`
-	ExerciseID  int     `json:"exercise_id"`
-	Date        string  `json:"date"`
-	Weight      float64 `json:"weight"`
-	Repetitions int     `json:"repetitions"`
+	WgerID      string     `json:"wger_id"`
+	SessionID   *string    `json:"session_id"`
+	LoggedAt    *time.Time `json:"logged_at"`
+	ExerciseID  int        `json:"exercise_id"`
+	Date        string     `json:"date"`
+	Weight      float64    `json:"weight"`
+	Repetitions int        `json:"repetitions"`
 }
 
 type WorkoutSession struct {
@@ -98,8 +100,8 @@ func (h *Handler) UpsertWorkoutExercises(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) ListWorkoutLogEntries(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(),
-		`SELECT id, wger_id, session_id, exercise_id, date, weight, repetitions
-		 FROM workout_log_entries ORDER BY date ASC, exercise_id ASC, id ASC`)
+		`SELECT id, wger_id, session_id, logged_at, exercise_id, date, weight, repetitions
+		 FROM workout_log_entries ORDER BY date ASC, logged_at ASC NULLS LAST, id ASC`)
 	if err != nil {
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
@@ -110,7 +112,7 @@ func (h *Handler) ListWorkoutLogEntries(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var e WorkoutLogEntry
 		var date time.Time
-		if err := rows.Scan(&e.ID, &e.WgerID, &e.SessionID, &e.ExerciseID, &date, &e.Weight, &e.Repetitions); err != nil {
+		if err := rows.Scan(&e.ID, &e.WgerID, &e.SessionID, &e.LoggedAt, &e.ExerciseID, &date, &e.Weight, &e.Repetitions); err != nil {
 			http.Error(w, "scan failed", http.StatusInternalServerError)
 			return
 		}
@@ -139,12 +141,12 @@ func (h *Handler) UpsertWorkoutLogEntries(w http.ResponseWriter, r *http.Request
 	for _, e := range entries {
 		ids = append(ids, e.WgerID)
 		if _, err := tx.Exec(r.Context(),
-			`INSERT INTO workout_log_entries (wger_id, session_id, exercise_id, date, weight, repetitions)
-			 VALUES ($1, $2, $3, $4, $5, $6)
-			 ON CONFLICT (wger_id) DO UPDATE SET session_id = EXCLUDED.session_id,
+			`INSERT INTO workout_log_entries (wger_id, session_id, logged_at, exercise_id, date, weight, repetitions)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			 ON CONFLICT (wger_id) DO UPDATE SET session_id = EXCLUDED.session_id, logged_at = EXCLUDED.logged_at,
 			   exercise_id = EXCLUDED.exercise_id, date = EXCLUDED.date,
 			   weight = EXCLUDED.weight, repetitions = EXCLUDED.repetitions`,
-			e.WgerID, e.SessionID, e.ExerciseID, e.Date, e.Weight, e.Repetitions); err != nil {
+			e.WgerID, e.SessionID, e.LoggedAt, e.ExerciseID, e.Date, e.Weight, e.Repetitions); err != nil {
 			http.Error(w, "upsert failed", http.StatusInternalServerError)
 			return
 		}
@@ -239,16 +241,17 @@ func (h *Handler) PutWgerOAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 type WorkoutPlanDay struct {
-	DayID       int    `json:"day_id"`
-	RoutineID   int    `json:"routine_id"`
-	Name        string `json:"name"`
-	IsRest      bool   `json:"is_rest"`
-	ExerciseIDs []int  `json:"exercise_ids"`
+	DayID       int             `json:"day_id"`
+	RoutineID   int             `json:"routine_id"`
+	Name        string          `json:"name"`
+	IsRest      bool            `json:"is_rest"`
+	ExerciseIDs []int           `json:"exercise_ids"`
+	Entries     json.RawMessage `json:"entries"` // [{slot_entry_id, exercise_id, sets: [{iteration, value}]}]
 }
 
 func (h *Handler) ListWorkoutPlanDays(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(),
-		`SELECT day_id, routine_id, name, is_rest, exercise_ids FROM workout_plan_days ORDER BY routine_id, day_id`)
+		`SELECT day_id, routine_id, name, is_rest, exercise_ids, entries FROM workout_plan_days ORDER BY routine_id, day_id`)
 	if err != nil {
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
@@ -258,7 +261,7 @@ func (h *Handler) ListWorkoutPlanDays(w http.ResponseWriter, r *http.Request) {
 	days := []WorkoutPlanDay{}
 	for rows.Next() {
 		var d WorkoutPlanDay
-		if err := rows.Scan(&d.DayID, &d.RoutineID, &d.Name, &d.IsRest, &d.ExerciseIDs); err != nil {
+		if err := rows.Scan(&d.DayID, &d.RoutineID, &d.Name, &d.IsRest, &d.ExerciseIDs, &d.Entries); err != nil {
 			http.Error(w, "scan failed", http.StatusInternalServerError)
 			return
 		}
@@ -288,9 +291,12 @@ func (h *Handler) ReplaceWorkoutPlanDays(w http.ResponseWriter, r *http.Request)
 		if d.ExerciseIDs == nil {
 			d.ExerciseIDs = []int{}
 		}
+		if len(d.Entries) == 0 || string(d.Entries) == "null" {
+			d.Entries = json.RawMessage("[]")
+		}
 		if _, err := tx.Exec(r.Context(),
-			`INSERT INTO workout_plan_days (day_id, routine_id, name, is_rest, exercise_ids) VALUES ($1, $2, $3, $4, $5)`,
-			d.DayID, d.RoutineID, d.Name, d.IsRest, d.ExerciseIDs); err != nil {
+			`INSERT INTO workout_plan_days (day_id, routine_id, name, is_rest, exercise_ids, entries) VALUES ($1, $2, $3, $4, $5, $6)`,
+			d.DayID, d.RoutineID, d.Name, d.IsRest, d.ExerciseIDs, string(d.Entries)); err != nil {
 			http.Error(w, "insert failed", http.StatusInternalServerError)
 			return
 		}

@@ -67,8 +67,17 @@ type wgerSlot struct {
 }
 
 type wgerSlotEntry struct {
+	ID       int `json:"id"`
 	Slot     int `json:"slot"`
 	Exercise int `json:"exercise"`
+}
+
+// wgerSetsConfig is the planned number of sets of a slot entry from an iteration on ("r" = replace).
+type wgerSetsConfig struct {
+	SlotEntry int    `json:"slot_entry"`
+	Iteration int    `json:"iteration"`
+	Value     *int   `json:"value"`
+	Operation string `json:"operation"`
 }
 
 type wgerPage[T any] struct {
@@ -213,11 +222,15 @@ func (w *WgerWorker) sync(ctx context.Context, p *syncProgress) error {
 	var days []wgerDay
 	var slots []wgerSlot
 	var slotEntries []wgerSlotEntry
+	var setsConfigs []wgerSetsConfig
 	planFetches := []func() error{
 		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/day/?limit=200", token, &days, nil) },
 		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/slot/?limit=500", token, &slots, nil) },
 		func() error {
 			return wgerGetAll(ctx, w.WgerURL+"/api/v2/slot-entry/?limit=1000", token, &slotEntries, nil)
+		},
+		func() error {
+			return wgerGetAll(ctx, w.WgerURL+"/api/v2/sets-config/?limit=1000", token, &setsConfigs, nil)
 		},
 	}
 	for i, f := range planFetches {
@@ -231,7 +244,7 @@ func (w *WgerWorker) sync(ctx context.Context, p *syncProgress) error {
 		dayNames[d.ID] = d.Name
 	}
 	p.step(ctx, "Saving routine plan", 90, 90, 0, 0)
-	if err := postJSON(ctx, w.APIBaseURL+"/internal/workout/plan", planDays(days, slots, slotEntries)); err != nil {
+	if err := postJSON(ctx, w.APIBaseURL+"/internal/workout/plan", planDays(days, slots, slotEntries, setsConfigs)); err != nil {
 		return fmt.Errorf("post workout plan: %w", err)
 	}
 
@@ -264,9 +277,14 @@ func (w *WgerWorker) sync(ctx context.Context, p *syncProgress) error {
 		if l.WeightUnit != nil && *l.WeightUnit == wgerWeightUnitLb {
 			weight *= lbToKg
 		}
+		var loggedAt *time.Time
+		if t, err := time.Parse(time.RFC3339, l.Date); err == nil {
+			loggedAt = &t
+		}
 		entries = append(entries, map[string]any{
 			"wger_id":     l.ID,
 			"session_id":  l.Session,
+			"logged_at":   loggedAt,
 			"exercise_id": l.Exercise,
 			"date":        l.Date[:min(10, len(l.Date))],
 			"weight":      weight,
@@ -283,21 +301,48 @@ func (w *WgerWorker) sync(ctx context.Context, p *syncProgress) error {
 	return nil
 }
 
-// planDays joins routine days with their slot entries into [{day_id, routine_id, name, is_rest, exercise_ids}].
-func planDays(days []wgerDay, slots []wgerSlot, entries []wgerSlotEntry) []map[string]any {
+type planSets struct {
+	Iteration int `json:"iteration"`
+	Value     int `json:"value"`
+}
+
+type planEntry struct {
+	SlotEntryID int        `json:"slot_entry_id"`
+	ExerciseID  int        `json:"exercise_id"`
+	Sets        []planSets `json:"sets"`
+}
+
+// planDays joins routine days with their slot entries and planned sets into
+// [{day_id, routine_id, name, is_rest, exercise_ids, entries}]. Only replace ("r") set configs are
+// kept: wger's other operations add to or subtract from the previous iteration.
+func planDays(days []wgerDay, slots []wgerSlot, entries []wgerSlotEntry, setsConfigs []wgerSetsConfig) []map[string]any {
 	slotDay := make(map[int]int, len(slots))
 	for _, s := range slots {
 		slotDay[s.ID] = s.Day
 	}
+	sets := map[int][]planSets{}
+	for _, c := range setsConfigs {
+		if c.Value != nil && (c.Operation == "" || c.Operation == "r") {
+			sets[c.SlotEntry] = append(sets[c.SlotEntry], planSets{Iteration: c.Iteration, Value: *c.Value})
+		}
+	}
 	exercises := map[int][]int{}
+	dayEntries := map[int][]planEntry{}
 	seen := map[[2]int]bool{}
 	for _, e := range entries {
 		day, ok := slotDay[e.Slot]
-		if !ok || seen[[2]int{day, e.Exercise}] {
+		if !ok {
 			continue
 		}
-		seen[[2]int{day, e.Exercise}] = true
-		exercises[day] = append(exercises[day], e.Exercise)
+		ps := sets[e.ID]
+		if ps == nil {
+			ps = []planSets{}
+		}
+		dayEntries[day] = append(dayEntries[day], planEntry{SlotEntryID: e.ID, ExerciseID: e.Exercise, Sets: ps})
+		if !seen[[2]int{day, e.Exercise}] {
+			seen[[2]int{day, e.Exercise}] = true
+			exercises[day] = append(exercises[day], e.Exercise)
+		}
 	}
 	out := make([]map[string]any, 0, len(days))
 	for _, d := range days {
@@ -305,7 +350,12 @@ func planDays(days []wgerDay, slots []wgerSlot, entries []wgerSlotEntry) []map[s
 		if ids == nil {
 			ids = []int{}
 		}
-		out = append(out, map[string]any{"day_id": d.ID, "routine_id": d.Routine, "name": d.Name, "is_rest": d.IsRest, "exercise_ids": ids})
+		pe := dayEntries[d.ID]
+		if pe == nil {
+			pe = []planEntry{}
+		}
+		out = append(out, map[string]any{"day_id": d.ID, "routine_id": d.Routine, "name": d.Name, "is_rest": d.IsRest,
+			"exercise_ids": ids, "entries": pe})
 	}
 	return out
 }
