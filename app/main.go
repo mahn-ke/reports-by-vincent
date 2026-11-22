@@ -586,30 +586,84 @@ func (a *App) handleWgerCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Body.Close()
 
-	a.triggerWgerSync()
+	a.triggerWgerSync(r.Context())
 	http.Redirect(w, r, "/workout/calendar?wger=connected", http.StatusFound)
 }
 
-// triggerWgerSync asks the jobs service to enqueue a wger sync now instead of waiting for the daily run.
-func (a *App) triggerWgerSync() {
+// triggerWgerSync asks the jobs service to enqueue a wger sync now instead of waiting for the daily
+// run, and marks the sync as queued so the calendar shows progress right away.
+func (a *App) triggerWgerSync(ctx context.Context) bool {
 	resp, err := http.Post(a.jobsURL+"/trigger/wger", "application/json", nil)
 	if err != nil {
 		slog.Warn("triggering wger sync failed", "err", err)
-		return
+		return false
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		slog.Warn("triggering wger sync failed", "status", resp.StatusCode)
+		return false
 	}
+	a.markSyncQueued(ctx)
+	return true
+}
+
+type syncStatus struct {
+	State     string    `json:"state"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// markSyncQueued records a queued sync unless one is visibly running (recent progress), so a
+// second click does not reset a running bar.
+func (a *App) markSyncQueued(ctx context.Context) {
+	var cur syncStatus
+	if err := a.apiGet(ctx, "/internal/wger/sync-status", &cur); err == nil &&
+		cur.State == "running" && time.Since(cur.UpdatedAt) < 2*time.Minute {
+		return
+	}
+	body, _ := json.Marshal(map[string]any{"state": "queued", "phase": "Waiting for the sync to start", "percent": 0})
+	resp, err := http.Post(a.apiURL+"/internal/wger/sync-status", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		slog.Warn("marking wger sync as queued failed", "err", err)
+		return
+	}
+	resp.Body.Close()
 }
 
 func (a *App) handleWgerResync(w http.ResponseWriter, r *http.Request) {
-	a.triggerWgerSync()
-	http.Redirect(w, r, "/workout/calendar?wger=syncing", http.StatusFound)
+	ok := a.triggerWgerSync(r.Context())
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		if !ok {
+			http.Error(w, `{"error":"could not start the sync"}`, http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if !ok {
+		http.Redirect(w, r, "/workout/calendar?wger=error", http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/workout/calendar", http.StatusFound)
+}
+
+// handleWgerSyncStatus returns the progress of the current/last wger sync for the calendar page.
+func (a *App) handleWgerSyncStatus(w http.ResponseWriter, r *http.Request) {
+	req, _ := http.NewRequestWithContext(r.Context(), "GET", a.apiURL+"/internal/wger/sync-status", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "status unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, io.LimitReader(resp.Body, 64<<10))
 }
 
 type calendarPageData struct {
 	Days         template.JS
+	SyncStatus   template.JS
 	Connected    bool
 	OAuthEnabled bool
 	Flash        string
@@ -625,9 +679,16 @@ func (a *App) handleWorkoutCalendar(w http.ResponseWriter, r *http.Request) {
 	a.apiGet(r.Context(), "/internal/workout/sessions", &sessions)
 	a.apiGet(r.Context(), "/internal/workout/plan", &plans)
 
+	var status json.RawMessage
+	if err := a.apiGet(r.Context(), "/internal/wger/sync-status", &status); err != nil || len(status) == 0 {
+		status = json.RawMessage(`{"state":"none"}`)
+	}
+	statusJ, _ := json.Marshal(status) // re-marshal: escapes <, > and & for the script context
+
 	daysJ, _ := json.Marshal(buildCalendar(entries, exercises, sessions, plans))
 	renderTemplate(w, "calendar", calendarPageData{
 		Days:         template.JS(daysJ),
+		SyncStatus:   template.JS(statusJ),
 		Connected:    a.wgerConnected(r.Context()),
 		OAuthEnabled: a.wgerOAuth != nil,
 		Flash:        r.URL.Query().Get("wger"),
@@ -732,6 +793,7 @@ func main() {
 		r.Get("/wger/connect", app.handleWgerConnect)
 		r.Get("/wger/callback", app.handleWgerCallback)
 		r.Post("/wger/resync", app.handleWgerResync)
+		r.Get("/wger/sync-status", app.handleWgerSyncStatus)
 	})
 
 	slog.Info("App listening on :8080")

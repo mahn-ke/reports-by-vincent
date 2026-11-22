@@ -54,6 +54,8 @@ func main() {
 		// wger OAuth tokens: internal only, never expose under /api.
 		r.Get("/wger/oauth", h.GetWgerOAuth)
 		r.Post("/wger/oauth", h.PutWgerOAuth)
+		r.Get("/wger/sync-status", h.GetWgerSyncStatus)
+		r.Post("/wger/sync-status", h.PutWgerSyncStatus)
 	})
 
 	// OIDC-protected, admin-only routes for external clients (exposed via nginx at /api/). Skipped if OIDC_ISSUER is not configured.

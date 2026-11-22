@@ -23,7 +23,7 @@
   <h2 class="mb-0 me-auto">Workout Calendar</h2>
   {{if .Connected}}
     <span class="badge text-bg-success">wger connected</span>
-    <form method="post" action="/wger/resync" class="d-inline"><button class="btn btn-sm btn-outline-secondary">Resync</button></form>
+    <form method="post" action="/wger/resync" class="d-inline" id="resync-form"><button class="btn btn-sm btn-outline-secondary" id="resync-btn">Resync</button></form>
     {{if .OAuthEnabled}}<a class="btn btn-sm btn-outline-secondary" href="/wger/connect">Reconnect</a>{{end}}
   {{else if .OAuthEnabled}}
     <a class="btn btn-sm btn-primary" href="/wger/connect">Connect wger</a>
@@ -32,9 +32,21 @@
   {{end}}
 </div>
 
-{{if eq .Flash "connected"}}<div class="alert alert-success py-2">wger connected — sync started. Refresh in a moment.</div>{{end}}
-{{if eq .Flash "syncing"}}<div class="alert alert-info py-2">Sync started. Refresh in a moment.</div>{{end}}
-{{if eq .Flash "error"}}<div class="alert alert-danger py-2">Connecting to wger failed. Check the app logs and try again.</div>{{end}}
+{{if eq .Flash "connected"}}<div class="alert alert-success py-2">wger connected.</div>{{end}}
+{{if eq .Flash "error"}}<div class="alert alert-danger py-2">Connecting to wger or starting the sync failed. Check the app logs and try again.</div>{{end}}
+
+<div class="card mb-3" id="sync-card" hidden aria-live="polite">
+  <div class="card-body py-2">
+    <div class="d-flex flex-wrap justify-content-between gap-2 small mb-1">
+      <span><strong id="sync-title"></strong> <span class="text-body-secondary" id="sync-phase"></span></span>
+      <span class="text-body-secondary" id="sync-meta"></span>
+    </div>
+    <div class="progress" role="progressbar" aria-label="wger sync progress" aria-valuemin="0" aria-valuemax="100" id="sync-progress" style="height:0.75rem;">
+      <div class="progress-bar" id="sync-bar" style="width:0%"></div>
+    </div>
+    <div class="small mt-1" id="sync-message"></div>
+  </div>
+</div>
 
 <div class="d-flex align-items-center gap-2 mb-2">
   <button type="button" class="btn btn-sm btn-outline-secondary" id="prev-month" aria-label="Previous month">‹</button>
@@ -72,6 +84,7 @@
 {{define "scripts"}}
 <script>
 const DAYS = {{.Days}} || [];
+const INITIAL_SYNC = {{.SyncStatus}};
 const byDate = new Map(DAYS.map(d => [d.date, d]));
 const TYPE_LABEL = { push: 'Push', pull: 'Pull', legs: 'Legs', full: 'Full Body', upper: 'Upper' };
 const STATUS_LABEL = { up: 'progressive overload', same: 'identical', down: 'less than last time', first: '' };
@@ -195,5 +208,94 @@ document.getElementById('prev-month').addEventListener('click', () => { view.set
 document.getElementById('next-month').addEventListener('click', () => { view.setMonth(view.getMonth() + 1); render(); });
 document.getElementById('this-month').addEventListener('click', () => { view = new Date(); view.setDate(1); render(); });
 render();
+
+// --- wger sync progress ---
+const ACTIVE = new Set(['queued', 'running']);
+const STALL_SECONDS = 90;
+let pollTimer = null;
+let sawActive = false;
+
+function ago(iso) {
+  if (!iso) return '';
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
+  return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : new Date(iso).toLocaleString();
+}
+
+function showSync(st) {
+  const card = document.getElementById('sync-card');
+  if (!st || st.state === 'none' || st.state === 'skipped') { card.hidden = true; return; }
+  const active = ACTIVE.has(st.state);
+  // A finished sync stays visible for a while so the result can be read, then the card hides.
+  const finishedLongAgo = !active && st.finished_at && (Date.now() - new Date(st.finished_at)) > 10 * 60 * 1000;
+  if (finishedLongAgo && st.state === 'done') { card.hidden = true; return; }
+  card.hidden = false;
+
+  const pct = Math.round(st.state === 'done' ? 100 : (st.percent || 0));
+  const stalled = st.state === 'running' && (Date.now() - new Date(st.updated_at)) / 1000 > STALL_SECONDS;
+  const bar = document.getElementById('sync-bar');
+  bar.style.width = `${Math.max(pct, st.state === 'queued' ? 100 : 0)}%`;
+  bar.textContent = st.state === 'queued' ? '' : `${pct}%`;
+  bar.className = 'progress-bar' + (
+    st.state === 'done' ? ' bg-success' :
+    st.state === 'failed' ? ' bg-danger' :
+    stalled ? ' bg-warning' :
+    ' progress-bar-striped progress-bar-animated' + (st.state === 'queued' ? ' bg-secondary' : ''));
+  document.getElementById('sync-progress').setAttribute('aria-valuenow', String(pct));
+
+  const titles = { queued: 'Sync queued', running: 'Syncing with wger', done: 'Sync complete', failed: 'Sync failed' };
+  document.getElementById('sync-title').textContent = stalled ? 'Sync not progressing' : (titles[st.state] || st.state);
+  document.getElementById('sync-phase').textContent = active ? `· ${st.phase || ''}` : '';
+  document.getElementById('sync-meta').textContent = active
+    ? (st.started_at ? `started ${ago(st.started_at)}` : '')
+    : (st.finished_at ? `finished ${ago(st.finished_at)}` : '');
+  const msg = document.getElementById('sync-message');
+  msg.className = 'small mt-1' + (st.state === 'failed' ? ' text-danger-emphasis' : ' text-body-secondary');
+  msg.textContent = stalled
+    ? `No progress for over ${STALL_SECONDS}s (last: ${ago(st.updated_at)}). The jobs service may have restarted; try Resync.`
+    : (st.message || '');
+
+  const btn = document.getElementById('resync-btn');
+  if (btn) btn.disabled = active && !stalled;
+}
+
+async function poll() {
+  let st;
+  try {
+    const res = await fetch('/wger/sync-status', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+    if (res.status === 401 || res.redirected) { stopPolling(); return; } // session expired
+    st = await res.json();
+  } catch { schedule(5000); return; }
+  showSync(st);
+  if (ACTIVE.has(st.state)) {
+    sawActive = true;
+    schedule(1000);
+  } else if (sawActive && st.state === 'done') {
+    // New data is in: reload to rebuild the calendar (the finished card stays visible after reload).
+    setTimeout(() => location.reload(), 800);
+  } else {
+    stopPolling();
+  }
+}
+function schedule(ms) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
+function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }
+
+const resyncForm = document.getElementById('resync-form');
+if (resyncForm) {
+  resyncForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    showSync({ state: 'queued', phase: 'Starting…', percent: 0 });
+    try {
+      const res = await fetch('/wger/resync', { method: 'POST', headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(String(res.status));
+      sawActive = true;
+      schedule(500);
+    } catch {
+      showSync({ state: 'failed', percent: 0, message: 'Could not start the sync. Try again or check the app logs.' });
+    }
+  });
+}
+
+showSync(INITIAL_SYNC);
+if (ACTIVE.has(INITIAL_SYNC.state)) { sawActive = true; schedule(1000); }
 </script>
 {{end}}
