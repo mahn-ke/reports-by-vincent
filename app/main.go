@@ -80,15 +80,27 @@ type WorkoutSession struct {
 }
 
 type WorkoutPlanDay struct {
-	DayID       int    `json:"day_id"`
-	RoutineID   int    `json:"routine_id"`
-	Name        string `json:"name"`
-	IsRest      bool   `json:"is_rest"`
-	ExerciseIDs []int  `json:"exercise_ids"`
+	DayID       int         `json:"day_id"`
+	RoutineID   int         `json:"routine_id"`
+	Name        string      `json:"name"`
+	IsRest      bool        `json:"is_rest"`
+	ExerciseIDs []int       `json:"exercise_ids"`
+	Entries     []PlanEntry `json:"entries"`
+}
+
+// PlanEntry is one exercise slot of a routine day with its planned number of sets per iteration.
+type PlanEntry struct {
+	SlotEntryID int `json:"slot_entry_id"`
+	ExerciseID  int `json:"exercise_id"`
+	Sets        []struct {
+		Iteration int `json:"iteration"`
+		Value     int `json:"value"`
+	} `json:"sets"`
 }
 
 type WorkoutLogEntry struct {
-	SessionID   *string `json:"session_id"`
+	LoggedAt    *time.Time `json:"logged_at"`
+	SessionID   *string    `json:"session_id"`
 	ExerciseID  int     `json:"exercise_id"`
 	Date        string  `json:"date"`
 	Weight      float64 `json:"weight"`

@@ -43,4 +43,15 @@ The OAuth client (`reports-by-vincent`) is created by Terraform in `mahn-ke/repo
 2. Otherwise go by the exercises' muscles. A group with ≥ 60% of the sets decides the day. A spread over several groups is Full Body, or Upper if legs aren't among them. Rear-delt work and pullovers count as Pull.
 3. Otherwise use the routine day that wger attached the session to. This comes last because wger assigns it from the schedule, not from what was trained.
 
-The day's volume (Σ kg × reps, or reps when both days are bodyweight-only) is compared with the previous day of the same type: green = more, yellow = identical, red = less.
+The type is only a label. Overload is scored the same way as the suggestions in the wger app
+([ViMaSter/wger-flutter](https://github.com/ViMaSter/wger-flutter), `lib/features/routines/progressive_overload.dart`):
+
+- Each exercise is compared with **its own previous session**.
+- The baseline is the **first N sets** of that session, where N is the number of sets planned for the exercise today (from the routine's sets config at that visit). Extra sets done last time don't raise the bar.
+- A set's volume is kg × reps, or the reps for sets without weight. Overload means strictly more volume.
+
+Each exercise counts towards each of its primary muscles in wger, or its category if wger lists none. A muscle group is overloaded when its volume beats its baseline. The day is:
+
+- **green** when every group was overloaded
+- **yellow** when at least half were, or when every group repeated last time exactly
+- **red** when fewer than half were
