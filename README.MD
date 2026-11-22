@@ -55,3 +55,5 @@ Each exercise counts towards each of its primary muscles in wger, or its categor
 - **green** when every group was overloaded
 - **yellow** when at least half were, or when every group repeated last time exactly
 - **red** when fewer than half were
+
+Each calendar day shows one chip per muscle group hit: ▲ overloaded, = identical, ▼ less, or ○ first time. First-time groups don't count towards the day's colour. Clicking a day opens a breakdown styled after the app's progressive overload card. For each exercise it shows "Last time: … = volume", the session as the matching app option (More repetitions, Heavier weight, One more set, As before, or Below target), and a set-by-set table of previous set, that day's set and the difference.

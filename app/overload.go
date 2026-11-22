@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -34,6 +35,12 @@ const (
 	statusFirst   = "first"   // nothing to compare with yet (neutral)
 )
 
+// LoggedSet is one set as the app shows it: weight (0 without) and repetitions.
+type LoggedSet struct {
+	Weight float64 `json:"w"`
+	Reps   int     `json:"r"`
+}
+
 type CalendarExercise struct {
 	Name         string   `json:"name"`
 	Groups       []string `json:"groups"`
@@ -46,13 +53,21 @@ type CalendarExercise struct {
 	PlannedSets  *int     `json:"plannedSets,omitempty"`
 	PrevDate     string   `json:"prevDate,omitempty"`
 	Status       string   `json:"status"`
+	// The sets of this session and the baseline sets of the previous one (its first N), in order,
+	// for the app-style breakdown ("Last time: 3 × (6 × 22.5 kg) + 6 × 17.5 kg = 510 kg").
+	CurrentSets  []LoggedSet `json:"currentSets"`
+	PreviousSets []LoggedSet `json:"previousSets,omitempty"`
 }
 
+// CalendarGroup is one muscle group hit on a day. Volume and Baseline only cover the group's
+// exercises that have a previous session; a group without any is "first" and doesn't count
+// towards the day's colour.
 type CalendarGroup struct {
 	Name     string  `json:"name"`
 	Volume   float64 `json:"volume"`
 	Baseline float64 `json:"baseline"`
 	Status   string  `json:"status"`
+	compared bool
 }
 
 type CalendarDay struct {
@@ -228,6 +243,7 @@ func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessi
 			cur := d.sets[id]
 			ce := CalendarExercise{Name: name, Groups: muscleGroups(ex), Sets: len(cur), Unit: "reps", Status: statusFirst}
 			for _, s := range cur {
+				ce.CurrentSets = append(ce.CurrentSets, LoggedSet{round2(s.weight), s.reps})
 				ce.Reps += s.reps
 				ce.Volume += setVolume(s.weight, s.reps)
 				if s.weight != 0 {
@@ -235,6 +251,19 @@ func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessi
 				}
 			}
 			cd.Volume += ce.Volume
+
+			group := func(name string) *CalendarGroup {
+				i, ok := groupIdx[name]
+				if !ok {
+					i = len(cd.Groups)
+					groupIdx[name] = i
+					cd.Groups = append(cd.Groups, CalendarGroup{Name: name, Status: statusFirst})
+				}
+				return &cd.Groups[i]
+			}
+			for _, g := range ce.Groups {
+				group(g) // every muscle group hit is listed, compared or not
+			}
 
 			if prevDate, ok := lastDate[id]; ok {
 				prev := days[prevDate].sets[id]
@@ -246,39 +275,46 @@ func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessi
 				base := 0.0
 				for _, s := range prev[:n] {
 					base += setVolume(s.weight, s.reps)
+					ce.PreviousSets = append(ce.PreviousSets, LoggedSet{round2(s.weight), s.reps})
 				}
 				ce.Baseline, ce.BaselineSets, ce.PrevDate = &base, n, prevDate
 				ce.Status = compareVolumes(ce.Volume, base)
 
-				for _, g := range ce.Groups {
-					i, ok := groupIdx[g]
-					if !ok {
-						i = len(cd.Groups)
-						groupIdx[g] = i
-						cd.Groups = append(cd.Groups, CalendarGroup{Name: g})
-					}
-					cd.Groups[i].Volume += ce.Volume
-					cd.Groups[i].Baseline += base
+				for _, name := range ce.Groups {
+					g := group(name)
+					g.Volume += ce.Volume
+					g.Baseline += base
+					g.compared = true
 				}
 			}
 			lastDate[id] = date
 			cd.Exercises = append(cd.Exercises, roundExercise(ce))
 		}
 
-		up, down := 0, 0
+		up, down, total := 0, 0, 0
 		for i := range cd.Groups {
 			g := &cd.Groups[i]
-			g.Status = compareVolumes(g.Volume, g.Baseline)
-			switch g.Status {
-			case statusUp:
-				up++
-			case statusDown:
-				down++
+			if g.compared {
+				total++
+				g.Status = compareVolumes(g.Volume, g.Baseline)
+				switch g.Status {
+				case statusUp:
+					up++
+				case statusDown:
+					down++
+				}
+			} else {
+				g.Volume = 0
+				for _, e := range cd.Exercises { // nothing to compare: show what was done
+					if slices.Contains(e.Groups, g.Name) {
+						g.Volume += e.Volume
+					}
+				}
 			}
 			g.Volume, g.Baseline = round2(g.Volume), round2(g.Baseline)
 		}
-		cd.GroupsUp, cd.GroupsTotal = up, len(cd.Groups)
-		switch total := len(cd.Groups); {
+		cd.GroupsUp, cd.GroupsTotal = up, total
+		switch {
 		case total == 0:
 			cd.Status = statusFirst
 		case up == total:

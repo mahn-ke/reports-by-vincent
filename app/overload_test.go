@@ -75,6 +75,11 @@ func TestMatchesAppSuggestions(t *testing.T) {
 	if biceps.Baseline == nil || *biceps.Baseline != 510 || biceps.BaselineSets != 4 || biceps.Volume != 517.5 || biceps.Status != statusUp {
 		t.Errorf("biceps = %+v (baseline %v), want 517.5 vs 510 over 4 planned sets: up", biceps, deref(biceps.Baseline))
 	}
+	// The breakdown gets the baseline sets (first 4 planned) and today's sets, in order.
+	if len(biceps.PreviousSets) != 4 || biceps.PreviousSets[0] != (LoggedSet{17.5, 6}) || biceps.PreviousSets[3] != (LoggedSet{22.5, 6}) ||
+		len(biceps.CurrentSets) != 4 || biceps.CurrentSets[3] != (LoggedSet{22.5, 5}) {
+		t.Errorf("biceps sets: previous %v current %v", biceps.PreviousSets, biceps.CurrentSets)
+	}
 	if pec := exerciseOn(t, days, "2026-11-17", "Pec deck rear delt fly"); *pec.Baseline != 1056 || pec.Volume != 1080 || pec.Status != statusUp {
 		t.Errorf("pec deck = %+v", pec)
 	}
@@ -221,5 +226,35 @@ func TestFirstDayHasEmptyListsNotNull(t *testing.T) {
 	j, _ := json.Marshal(days[0])
 	if strings.Contains(string(j), "null") {
 		t.Errorf("first day JSON contains null: %s", j)
+	}
+}
+
+// Every muscle group hit is listed; groups without a previous session are "first" and don't count.
+func TestGroupsHitIncludeFirstTime(t *testing.T) {
+	ex := []WorkoutExercise{
+		{ID: 1, Name: "Row", Muscles: []string{"Lats"}},
+		{ID: 2, Name: "Curl", Muscles: []string{"Biceps"}},
+		{ID: 3, Name: "Chin-up", Muscles: []string{"Lats", "Biceps"}},
+	}
+	b := (&logBuilder{}).add("2026-11-01", 1, 50, 10).
+		add("2026-11-08", 1, 50, 11).add("2026-11-08", 2, 20, 10).add("2026-11-08", 3, 0, 8)
+	d := buildCalendar(b.entries, ex, nil, nil)[1]
+	got := map[string]CalendarGroup{}
+	for _, g := range d.Groups {
+		got[g.Name] = g
+	}
+	if len(d.Groups) != 2 || got["Lats"].Status != statusUp || got["Biceps"].Status != statusFirst {
+		t.Fatalf("groups = %+v", d.Groups)
+	}
+	// Lats compares only the row (the chin-up is new): 550 vs 500.
+	if got["Lats"].Volume != 550 || got["Lats"].Baseline != 500 {
+		t.Errorf("lats = %+v, want 550 vs 500 (new chin-up left out)", got["Lats"])
+	}
+	// Biceps has nothing to compare: shows what was done (curl 200 + chin-up 8 reps).
+	if got["Biceps"].Volume != 208 {
+		t.Errorf("biceps volume = %v, want 208", got["Biceps"].Volume)
+	}
+	if d.GroupsTotal != 1 || d.GroupsUp != 1 || d.Status != statusUp {
+		t.Errorf("day = %s %d/%d, want up 1/1 (first-time groups don't count)", d.Status, d.GroupsUp, d.GroupsTotal)
 	}
 }
