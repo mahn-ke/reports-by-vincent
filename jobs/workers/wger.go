@@ -97,7 +97,8 @@ type wgerMuscle struct {
 }
 
 type wgerExerciseInfo struct {
-	ID       int `json:"id"`
+	ID       int    `json:"id"`
+	UUID     string `json:"uuid"`
 	Category struct {
 		Name string `json:"name"`
 	} `json:"category"`
@@ -200,7 +201,7 @@ func (w *WgerWorker) sync(ctx context.Context, p *syncProgress) error {
 					muscles = append(muscles, m.Name)
 				}
 			}
-			ex["muscles"] = muscles
+			ex["muscles"] = primaryMuscles(info.UUID, muscles)
 		}
 		exercises = append(exercises, ex)
 	}
@@ -358,6 +359,20 @@ func planDays(days []wgerDay, slots []wgerSlot, entries []wgerSlotEntry, setsCon
 			"exercise_ids": ids, "entries": pe})
 	}
 	return out
+}
+
+// primaryMuscles returns wger's primary muscles, or the curated override while wger lists none.
+func primaryMuscles(uuid string, fromWger []string) []string {
+	o, ok := muscleOverrides[uuid]
+	switch {
+	case !ok:
+		return fromWger
+	case len(fromWger) > 0:
+		slog.Info("wger now lists muscles for an overridden exercise; the override is obsolete", "exercise", o.Name, "uuid", uuid, "muscles", fromWger)
+		return fromWger
+	default:
+		return o.Primary
+	}
 }
 
 // accessToken returns a valid wger access token, refreshing (and persisting the rotated
