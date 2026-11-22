@@ -90,8 +90,10 @@
       <span><strong id="sync-title"></strong> <span class="text-body-secondary" id="sync-phase"></span></span>
       <span class="text-body-secondary" id="sync-meta"></span>
     </div>
-    <div class="progress" role="progressbar" aria-label="wger sync progress" aria-valuemin="0" aria-valuemax="100" id="sync-progress" style="height:0.75rem;">
+    <div class="progress" role="progressbar" aria-label="wger sync progress" aria-valuemin="0" aria-valuemax="100" id="sync-progress" style="height:0.75rem;position:relative;">
       <div class="progress-bar" id="sync-bar" style="width:0%"></div>
+      <!-- Centered on the whole track, so it stays put while the bar grows -->
+      <span id="sync-pct" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:600;line-height:1;color:#fff;text-shadow:0 0 2px rgba(0,0,0,.9),0 0 4px rgba(0,0,0,.6);pointer-events:none;font-variant-numeric:tabular-nums;"></span>
     </div>
     <div class="small mt-1" id="sync-message"></div>
   </div>
@@ -456,7 +458,7 @@ function showSync(st) {
   const stalled = st.state === 'running' && (Date.now() - new Date(st.updated_at)) / 1000 > STALL_SECONDS;
   const bar = document.getElementById('sync-bar');
   bar.style.width = `${Math.max(pct, st.state === 'queued' ? 100 : 0)}%`;
-  bar.textContent = st.state === 'queued' ? '' : `${pct}%`;
+  document.getElementById('sync-pct').textContent = st.state === 'queued' ? '' : `${pct}%`;
   bar.className = 'progress-bar' + (
     st.state === 'done' ? ' bg-success' :
     st.state === 'failed' ? ' bg-danger' :
