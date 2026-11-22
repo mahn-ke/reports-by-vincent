@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func intp(i int) *int { return &i }
+func strp(s string) *string { return &s }
 
 func TestDayTypeFromName(t *testing.T) {
 	cases := map[string]string{
@@ -58,7 +58,7 @@ func TestBuildCalendar(t *testing.T) {
 		{ID: 4, Name: "Pushup", Category: "Chest", Muscles: []string{"Chest"}},
 		{ID: 5, Name: "Plank", Category: "Abs"},
 	}
-	sessions := []WorkoutSession{{ID: 10, Date: "2026-11-09", DayName: "Pull"}}
+	sessions := []WorkoutSession{{ID: "3f2b0c9e-0000-4000-8000-000000000010", Date: "2026-11-09", DayName: "Pull"}}
 	set := func(date string, ex int, w float64, reps int) WorkoutLogEntry {
 		return WorkoutLogEntry{Date: date, ExerciseID: ex, Weight: w, Repetitions: reps}
 	}
@@ -76,7 +76,7 @@ func TestBuildCalendar(t *testing.T) {
 		// abs only: unclassified
 		set("2026-11-08", 5, 0, 30),
 		// session day name "Pull" wins over the chest muscles of the exercise -> pull, 600 > 500 -> up
-		{Date: "2026-11-09", ExerciseID: 1, Weight: 60, Repetitions: 10, SessionID: intp(10)},
+		{Date: "2026-11-09", ExerciseID: 1, Weight: 60, Repetitions: 10, SessionID: strp("3f2b0c9e-0000-4000-8000-000000000010")},
 		// zero reps are ignored entirely
 		set("2026-11-10", 1, 60, 0),
 		// bodyweight push days compare reps: first bodyweight-only push vs push #2 (1250 kg) -> down

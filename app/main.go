@@ -74,13 +74,13 @@ type WorkoutExercise struct {
 }
 
 type WorkoutSession struct {
-	ID      int    `json:"id"`
+	ID      string `json:"id"`
 	Date    string `json:"date"`
 	DayName string `json:"day_name"`
 }
 
 type WorkoutLogEntry struct {
-	SessionID   *int    `json:"session_id"`
+	SessionID   *string `json:"session_id"`
 	ExerciseID  int     `json:"exercise_id"`
 	Date        string  `json:"date"`
 	Weight      float64 `json:"weight"`
