@@ -237,3 +237,67 @@ func (h *Handler) PutWgerOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 }
+
+type WorkoutPlanDay struct {
+	DayID       int    `json:"day_id"`
+	RoutineID   int    `json:"routine_id"`
+	Name        string `json:"name"`
+	IsRest      bool   `json:"is_rest"`
+	ExerciseIDs []int  `json:"exercise_ids"`
+}
+
+func (h *Handler) ListWorkoutPlanDays(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(r.Context(),
+		`SELECT day_id, routine_id, name, is_rest, exercise_ids FROM workout_plan_days ORDER BY routine_id, day_id`)
+	if err != nil {
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	days := []WorkoutPlanDay{}
+	for rows.Next() {
+		var d WorkoutPlanDay
+		if err := rows.Scan(&d.DayID, &d.RoutineID, &d.Name, &d.IsRest, &d.ExerciseIDs); err != nil {
+			http.Error(w, "scan failed", http.StatusInternalServerError)
+			return
+		}
+		days = append(days, d)
+	}
+	writeJSON(w, days)
+}
+
+// ReplaceWorkoutPlanDays stores the full set of wger routine days, removing days deleted in wger.
+func (h *Handler) ReplaceWorkoutPlanDays(w http.ResponseWriter, r *http.Request) {
+	var days []WorkoutPlanDay
+	if err := json.NewDecoder(r.Body).Decode(&days); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		http.Error(w, "begin failed", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), `DELETE FROM workout_plan_days`); err != nil {
+		http.Error(w, "delete failed", http.StatusInternalServerError)
+		return
+	}
+	for _, d := range days {
+		if d.ExerciseIDs == nil {
+			d.ExerciseIDs = []int{}
+		}
+		if _, err := tx.Exec(r.Context(),
+			`INSERT INTO workout_plan_days (day_id, routine_id, name, is_rest, exercise_ids) VALUES ($1, $2, $3, $4, $5)`,
+			d.DayID, d.RoutineID, d.Name, d.IsRest, d.ExerciseIDs); err != nil {
+			http.Error(w, "insert failed", http.StatusInternalServerError)
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		http.Error(w, "commit failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}

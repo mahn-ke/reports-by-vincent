@@ -73,7 +73,7 @@
 <script>
 const DAYS = {{.Days}} || [];
 const byDate = new Map(DAYS.map(d => [d.date, d]));
-const TYPE_LABEL = { push: 'Push', pull: 'Pull', legs: 'Legs' };
+const TYPE_LABEL = { push: 'Push', pull: 'Pull', legs: 'Legs', full: 'Full Body', upper: 'Upper' };
 const STATUS_LABEL = { up: 'progressive overload', same: 'identical', down: 'less than last time', first: '' };
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -168,7 +168,10 @@ function showDetail(day) {
   const label = TYPE_LABEL[day.type] || 'Unclassified';
   document.getElementById('detail-title').textContent =
     `${new Date(day.date + 'T00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} — ${label}`;
-  const source = day.source === 'routine' ? 'from wger routine day name' : day.source === 'muscles' ? 'from exercise muscles' : 'no push/pull/legs match';
+  const source = day.source === 'plan' ? `matches routine day “${day.planDay}”`
+    : day.source === 'muscles' ? 'from exercise muscles'
+    : day.source === 'session' ? 'from the routine day wger attached the session to'
+    : 'no push/pull/legs/full-body match';
   document.getElementById('detail-subtitle').textContent = day.prevDate
     ? `${fmtVolume(day, day.prevVolume)} vs ${fmtVolume({ volume: day.prevVolume, reps: day.prevReps }, day.volume)} on ${day.prevDate} (${deltaText(day)}, ${STATUS_LABEL[day.status]}) · type ${source}`
     : `${fmtVolume(day)} · first ${label.toLowerCase()} day on record · type ${source}`;

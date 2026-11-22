@@ -37,7 +37,10 @@ The OAuth client (`reports-by-vincent`) is created by Terraform in `mahn-ke/repo
 (`infrastructure/modules/wger_oauth`). Terraform sets this repository's `WGER_OAUTH_CLIENT_ID` and
 `WGER_OAUTH_CLIENT_SECRET` secrets, and fitness-by-vincent registers the client in wger on deploy.
 
-`/workout/calendar` labels each training day push, pull or legs. It uses the wger routine day name if
-that contains push/pull/leg, and otherwise the exercises' muscles. The day's volume (Σ kg × reps, or reps
-when both days are bodyweight-only) is compared with the previous day of the same type: green = more,
-yellow = identical, red = less.
+`/workout/calendar` labels each training day Push, Pull, Legs, Full Body or Upper, trying these in order:
+
+1. Match the day's logged exercises against the planned exercises of your wger routine days (Jaccard overlap ≥ 50%), and use that day's name. Lower counts as Legs.
+2. Otherwise go by the exercises' muscles. A group with ≥ 60% of the sets decides the day. A spread over several groups is Full Body, or Upper if legs aren't among them. Rear-delt work and pullovers count as Pull.
+3. Otherwise use the routine day that wger attached the session to. This comes last because wger assigns it from the schedule, not from what was trained.
+
+The day's volume (Σ kg × reps, or reps when both days are bodyweight-only) is compared with the previous day of the same type: green = more, yellow = identical, red = less.

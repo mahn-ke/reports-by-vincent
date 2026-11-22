@@ -79,6 +79,14 @@ type WorkoutSession struct {
 	DayName string `json:"day_name"`
 }
 
+type WorkoutPlanDay struct {
+	DayID       int    `json:"day_id"`
+	RoutineID   int    `json:"routine_id"`
+	Name        string `json:"name"`
+	IsRest      bool   `json:"is_rest"`
+	ExerciseIDs []int  `json:"exercise_ids"`
+}
+
 type WorkoutLogEntry struct {
 	SessionID   *string `json:"session_id"`
 	ExerciseID  int     `json:"exercise_id"`
@@ -611,11 +619,13 @@ func (a *App) handleWorkoutCalendar(w http.ResponseWriter, r *http.Request) {
 	var exercises []WorkoutExercise
 	var entries []WorkoutLogEntry
 	var sessions []WorkoutSession
+	var plans []WorkoutPlanDay
 	a.apiGet(r.Context(), "/internal/workout/exercises", &exercises)
 	a.apiGet(r.Context(), "/internal/workout/entries", &entries)
 	a.apiGet(r.Context(), "/internal/workout/sessions", &sessions)
+	a.apiGet(r.Context(), "/internal/workout/plan", &plans)
 
-	daysJ, _ := json.Marshal(buildCalendar(entries, exercises, sessions))
+	daysJ, _ := json.Marshal(buildCalendar(entries, exercises, sessions, plans))
 	renderTemplate(w, "calendar", calendarPageData{
 		Days:         template.JS(daysJ),
 		Connected:    a.wgerConnected(r.Context()),

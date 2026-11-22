@@ -7,12 +7,31 @@ import (
 	"strings"
 )
 
-// --- Push / pull / legs classification and progressive-overload scoring ---
+// --- Push / pull / legs / full-body classification and progressive-overload scoring ---
 
 const (
-	dayPush = "push"
-	dayPull = "pull"
-	dayLegs = "legs"
+	dayPush  = "push"
+	dayPull  = "pull"
+	dayLegs  = "legs"
+	dayFull  = "full"  // full body
+	dayUpper = "upper" // upper body (push + pull) in upper/lower splits; "lower" days count as legs
+)
+
+// Classification sources, strongest first.
+const (
+	sourcePlan    = "plan"    // logged exercises match a wger routine day's planned exercises
+	sourceMuscles = "muscles" // majority of sets by the exercises' muscles
+	sourceSession = "session" // the day the wger session was attached to (follows wger's schedule)
+)
+
+const (
+	// Minimum Jaccard overlap between logged and planned exercises for a plan match.
+	planMatchThreshold = 0.5
+	// Share of classified sets one group needs to decide a day on its own.
+	muscleMajorityShare = 0.6
+	// Without such a majority, a day spread over at least two groups (each with this share) is
+	// full body, or upper body when legs stay below it.
+	fullBodyMinShare = 0.2
 )
 
 const (
@@ -32,8 +51,9 @@ type CalendarExercise struct {
 
 type CalendarDay struct {
 	Date       string             `json:"date"`
-	Type       string             `json:"type"`   // push | pull | legs | ""
-	Source     string             `json:"source"` // routine | muscles | ""
+	Type       string             `json:"type"`   // push | pull | legs | full | upper | ""
+	Source     string             `json:"source"` // plan | muscles | session | ""
+	PlanDay    string             `json:"planDay,omitempty"`
 	Volume     float64            `json:"volume"`
 	Reps       int                `json:"reps"`
 	PrevDate   string             `json:"prevDate,omitempty"`
@@ -43,21 +63,26 @@ type CalendarDay struct {
 	Exercises  []CalendarExercise `json:"exercises"`
 }
 
-var dayNamePattern = regexp.MustCompile(`(?i)\b(push|pull|legs?)\b`)
+var dayNamePattern = regexp.MustCompile(`(?i)\b(push|pull|legs?|lower|upper|full[\s-]?body|fullbody|ganzkörper)\b`)
 
-// dayTypeFromName maps a wger routine day name ("Push A", "Leg day", ...) to a day type.
+// dayTypeFromName maps a wger routine day name ("Push A", "Leg day", "Full Body", "Lower #1",
+// "Upper #2") to a day type.
 func dayTypeFromName(name string) string {
 	m := dayNamePattern.FindStringSubmatch(name)
 	if m == nil {
 		return ""
 	}
-	switch strings.ToLower(m[1]) {
-	case "push":
+	switch n := strings.ToLower(m[1]); {
+	case n == "push":
 		return dayPush
-	case "pull":
+	case n == "pull":
 		return dayPull
-	default:
+	case strings.HasPrefix(n, "leg"), n == "lower":
 		return dayLegs
+	case n == "upper":
+		return dayUpper
+	default:
+		return dayFull
 	}
 }
 
@@ -88,8 +113,16 @@ func categoryType(category string) string {
 	return "" // Arms (ambiguous without muscles), Abs, Cardio
 }
 
-// exerciseType classifies an exercise by its primary muscles (majority), falling back to its category.
+// Exercises whose wger muscles/category point the wrong way: rear-delt work is pulling even though
+// wger files it under Shoulders/Chest (often without muscles), and pullovers are a lat movement.
+var pullNamePattern = regexp.MustCompile(`(?i)rear[\s-]?delt|reverse[\s-]?(pec|fly|flye)|face[\s-]?pull|pull[\s-]?over`)
+
+// exerciseType classifies an exercise by name override, then its primary muscles (majority),
+// then its category.
 func exerciseType(ex WorkoutExercise) string {
+	if pullNamePattern.MatchString(ex.Name) {
+		return dayPull
+	}
 	counts := map[string]int{}
 	for _, m := range ex.Muscles {
 		if t := muscleType(m); t != "" {
@@ -117,6 +150,69 @@ func majority(counts map[string]int) string {
 		return ""
 	}
 	return best
+}
+
+// muscleDayType decides a day from sets per muscle-derived type: a clear majority wins; a spread
+// over at least two groups is full body, or upper body if legs are not among them.
+func muscleDayType(typeSets map[string]int) string {
+	total := 0
+	for _, n := range typeSets {
+		total += n
+	}
+	if total == 0 {
+		return ""
+	}
+	top := majority(typeSets)
+	if top != "" && float64(typeSets[top])/float64(total) >= muscleMajorityShare {
+		return top
+	}
+	groups, legs := 0, false
+	for _, t := range []string{dayPush, dayPull, dayLegs} {
+		if float64(typeSets[t])/float64(total) >= fullBodyMinShare {
+			groups++
+			legs = legs || t == dayLegs
+		}
+	}
+	if groups >= 2 && legs {
+		return dayFull
+	}
+	if groups >= 2 {
+		return dayUpper
+	}
+	return top
+}
+
+// planMatch returns the type and name of the routine day whose planned exercises best match the
+// logged ones (Jaccard overlap), if the overlap reaches planMatchThreshold.
+func planMatch(logged map[int]bool, plans []WorkoutPlanDay) (string, string) {
+	bestScore, bestType, bestName := 0.0, "", ""
+	for _, p := range plans {
+		t := dayTypeFromName(p.Name)
+		if p.IsRest || t == "" || len(p.ExerciseIDs) == 0 {
+			continue
+		}
+		planned := map[int]bool{}
+		for _, id := range p.ExerciseIDs {
+			planned[id] = true
+		}
+		inter := 0
+		for id := range logged {
+			if planned[id] {
+				inter++
+			}
+		}
+		union := len(logged) + len(planned) - inter
+		if union == 0 {
+			continue
+		}
+		if score := float64(inter) / float64(union); score > bestScore {
+			bestScore, bestType, bestName = score, t, p.Name
+		}
+	}
+	if bestScore >= planMatchThreshold {
+		return bestType, bestName
+	}
+	return "", ""
 }
 
 func containsAny(s string, subs ...string) bool {
@@ -147,9 +243,10 @@ func compareDays(curVol float64, curReps int, prevVol float64, prevReps int) str
 	}
 }
 
-// buildCalendar aggregates sets into training days, classifies each day as push/pull/legs and
-// scores it against the previous day of the same type. Days are returned in date order.
-func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessions []WorkoutSession) []CalendarDay {
+// buildCalendar aggregates sets into training days, classifies each day (routine plan match,
+// then muscles, then the session's routine day) and scores it against the previous day of the
+// same type. Days are returned in date order.
+func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessions []WorkoutSession, plans []WorkoutPlanDay) []CalendarDay {
 	exByID := make(map[int]WorkoutExercise, len(exercises))
 	for _, e := range exercises {
 		exByID[e.ID] = e
@@ -166,11 +263,11 @@ func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessi
 		volume float64
 	}
 	type dayAgg struct {
-		volume    float64
-		reps      int
-		routine   string         // first push/pull/legs found in a linked session's day name
-		typeSets  map[string]int // sets per muscle-derived type
-		exercises map[int]*exAgg
+		volume      float64
+		reps        int
+		sessionType string         // type of the first linked session's routine day name
+		typeSets    map[string]int // sets per muscle-derived type
+		exercises   map[int]*exAgg
 	}
 	days := map[string]*dayAgg{}
 
@@ -186,8 +283,8 @@ func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessi
 		vol := e.Weight * float64(e.Repetitions)
 		d.volume += vol
 		d.reps += e.Repetitions
-		if d.routine == "" && e.SessionID != nil {
-			d.routine = dayTypeFromName(sessionName[*e.SessionID])
+		if d.sessionType == "" && e.SessionID != nil {
+			d.sessionType = dayTypeFromName(sessionName[*e.SessionID])
 		}
 		if t := exerciseType(exByID[e.ExerciseID]); t != "" {
 			d.typeSets[t]++
@@ -213,13 +310,17 @@ func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessi
 	for _, date := range dates {
 		d := days[date]
 		cd := CalendarDay{Date: date, Volume: round1(d.volume), Reps: d.reps, Status: statusFirst}
-		switch {
-		case d.routine != "":
-			cd.Type, cd.Source = d.routine, "routine"
-		default:
-			if t := majority(d.typeSets); t != "" {
-				cd.Type, cd.Source = t, "muscles"
-			}
+
+		logged := make(map[int]bool, len(d.exercises))
+		for id := range d.exercises {
+			logged[id] = true
+		}
+		if t, name := planMatch(logged, plans); t != "" {
+			cd.Type, cd.Source, cd.PlanDay = t, sourcePlan, name
+		} else if t := muscleDayType(d.typeSets); t != "" {
+			cd.Type, cd.Source = t, sourceMuscles
+		} else if d.sessionType != "" {
+			cd.Type, cd.Source = d.sessionType, sourceSession
 		}
 
 		ids := make([]int, 0, len(d.exercises))
