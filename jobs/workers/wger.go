@@ -72,6 +72,7 @@ type wgerSlotEntry struct {
 }
 
 type wgerPage[T any] struct {
+	Count   int     `json:"count"`
 	Next    *string `json:"next"`
 	Results []T     `json:"results"`
 }
@@ -107,42 +108,78 @@ const (
 	lbToKg           = 0.45359237
 )
 
+// Progress ranges (percent of the whole sync) per phase, in the order the sync runs them.
+const (
+	progLogsFrom, progLogsTo         = 2, 30
+	progSessionsFrom, progSessionsTo = 30, 38
+	progExerciseFrom, progExerciseTo = 38, 78
+	progPlanFrom, progPlanTo         = 80, 88
+)
+
 func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
+	p := newSyncProgress(w.APIBaseURL)
+	p.step(ctx, "Connecting to wger", 0, 0, 0, 0)
+	err := w.sync(ctx, p)
+	switch {
+	case errors.Is(err, errWgerNotConnected):
+		slog.Warn("wger not connected — open /workout/calendar in reports and click \"Connect wger\"; skipping")
+		p.finish(ctx, "skipped", "wger is not connected")
+		return nil
+	case err != nil:
+		msg := err.Error()
+		if job.Attempt < job.MaxAttempts {
+			msg += fmt.Sprintf(" (attempt %d of %d, retrying automatically)", job.Attempt, job.MaxAttempts)
+		}
+		p.finish(ctx, "failed", msg)
+		return err
+	}
+	return nil
+}
+
+func (w *WgerWorker) sync(ctx context.Context, p *syncProgress) error {
 	token, err := w.accessToken(ctx)
 	if errors.Is(err, errWgerNotConnected) {
-		slog.Warn("wger not connected — open /workout/calendar in reports and click \"Connect wger\"; skipping")
-		return nil
+		return err
 	}
 	if err != nil {
 		return fmt.Errorf("wger token: %w", err)
 	}
 
 	var logs []wgerWorkoutLog
-	if err := wgerGetAll(ctx, w.WgerURL+"/api/v2/workoutlog/?ordering=date&limit=200", token, &logs); err != nil {
+	if err := wgerGetAll(ctx, w.WgerURL+"/api/v2/workoutlog/?ordering=date&limit=200", token, &logs, func(done, total int) {
+		p.step(ctx, "Fetching workout logs", progLogsFrom, progLogsTo, done, total)
+	}); err != nil {
 		return fmt.Errorf("wger fetch logs: %w", err)
 	}
 	if len(logs) == 0 {
 		slog.Info("wger returned no workout logs")
+		p.finish(ctx, "done", "wger has no workout logs")
 		return nil
 	}
 
 	var sessions []wgerSession
-	if err := wgerGetAll(ctx, w.WgerURL+"/api/v2/workoutsession/?limit=200", token, &sessions); err != nil {
+	if err := wgerGetAll(ctx, w.WgerURL+"/api/v2/workoutsession/?limit=200", token, &sessions, func(done, total int) {
+		p.step(ctx, "Fetching workout sessions", progSessionsFrom, progSessionsTo, done, total)
+	}); err != nil {
 		return fmt.Errorf("wger fetch sessions: %w", err)
 	}
 
 	// Exercises: names plus category/muscles for push/pull/legs classification.
 	seen := map[int]bool{}
-	exercises := []map[string]any{}
+	exerciseIDs := []int{}
 	for _, l := range logs {
-		if seen[l.Exercise] {
-			continue
+		if !seen[l.Exercise] {
+			seen[l.Exercise] = true
+			exerciseIDs = append(exerciseIDs, l.Exercise)
 		}
-		seen[l.Exercise] = true
-		ex := map[string]any{"id": l.Exercise, "name": fmt.Sprintf("Exercise %d", l.Exercise), "category": "", "muscles": []string{}}
-		info, err := w.fetchExerciseInfo(ctx, token, l.Exercise)
+	}
+	exercises := []map[string]any{}
+	for i, id := range exerciseIDs {
+		p.step(ctx, "Fetching exercise details", progExerciseFrom, progExerciseTo, i, len(exerciseIDs))
+		ex := map[string]any{"id": id, "name": fmt.Sprintf("Exercise %d", id), "category": "", "muscles": []string{}}
+		info, err := w.fetchExerciseInfo(ctx, token, id)
 		if err != nil {
-			slog.Warn("wger exercise info failed", "exercise_id", l.Exercise, "err", err)
+			slog.Warn("wger exercise info failed", "exercise_id", id, "err", err)
 		} else {
 			ex["name"] = exerciseName(info)
 			ex["category"] = info.Category.Name
@@ -158,6 +195,7 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 		}
 		exercises = append(exercises, ex)
 	}
+	p.step(ctx, "Saving exercises", progExerciseTo, progExerciseTo, 0, 0)
 	if err := postJSON(ctx, w.APIBaseURL+"/internal/workout/exercises", exercises); err != nil {
 		return fmt.Errorf("post workout exercises: %w", err)
 	}
@@ -175,11 +213,15 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 	var days []wgerDay
 	var slots []wgerSlot
 	var slotEntries []wgerSlotEntry
-	for _, f := range []func() error{
-		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/day/?limit=200", token, &days) },
-		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/slot/?limit=500", token, &slots) },
-		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/slot-entry/?limit=1000", token, &slotEntries) },
-	} {
+	planFetches := []func() error{
+		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/day/?limit=200", token, &days, nil) },
+		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/slot/?limit=500", token, &slots, nil) },
+		func() error {
+			return wgerGetAll(ctx, w.WgerURL+"/api/v2/slot-entry/?limit=1000", token, &slotEntries, nil)
+		},
+	}
+	for i, f := range planFetches {
+		p.step(ctx, "Fetching routine plan", progPlanFrom, progPlanTo, i, len(planFetches))
 		if err := f(); err != nil {
 			return fmt.Errorf("wger fetch routine plan: %w", err)
 		}
@@ -188,6 +230,7 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 	for _, d := range days {
 		dayNames[d.ID] = d.Name
 	}
+	p.step(ctx, "Saving routine plan", 90, 90, 0, 0)
 	if err := postJSON(ctx, w.APIBaseURL+"/internal/workout/plan", planDays(days, slots, slotEntries)); err != nil {
 		return fmt.Errorf("post workout plan: %w", err)
 	}
@@ -207,6 +250,7 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 		}
 		sessionRows = append(sessionRows, map[string]any{"id": s.ID, "date": date, "day_name": name})
 	}
+	p.step(ctx, "Saving sessions", 92, 92, 0, 0)
 	if err := postJSON(ctx, w.APIBaseURL+"/internal/workout/sessions", sessionRows); err != nil {
 		return fmt.Errorf("post workout sessions: %w", err)
 	}
@@ -229,11 +273,13 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 			"repetitions": int(parseFloat(l.Repetitions)),
 		})
 	}
+	p.step(ctx, "Saving sets", 95, 95, 0, 0)
 	if err := postJSON(ctx, w.APIBaseURL+"/internal/workout/entries", entries); err != nil {
 		return fmt.Errorf("post workout entries: %w", err)
 	}
 
 	slog.Info("wger sync complete", "exercises", len(exercises), "sessions", len(sessionRows), "entries", len(entries), "plan_days", len(days))
+	p.finish(ctx, "done", fmt.Sprintf("Synced %d sets from %d sessions", len(entries), len(sessionRows)))
 	return nil
 }
 
@@ -365,13 +411,17 @@ func wgerGet(ctx context.Context, u, token string, out any) error {
 	return json.Unmarshal(body, out)
 }
 
-func wgerGetAll[T any](ctx context.Context, u, token string, out *[]T) error {
+// wgerGetAll follows wger's pagination; onPage (optional) gets the items fetched so far and the total.
+func wgerGetAll[T any](ctx context.Context, u, token string, out *[]T, onPage func(done, total int)) error {
 	for u != "" {
 		var page wgerPage[T]
 		if err := wgerGet(ctx, u, token, &page); err != nil {
 			return err
 		}
 		*out = append(*out, page.Results...)
+		if onPage != nil {
+			onPage(len(*out), page.Count)
+		}
 		u = ""
 		if page.Next != nil {
 			u = *page.Next

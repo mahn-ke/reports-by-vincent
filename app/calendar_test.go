@@ -134,7 +134,7 @@ func TestCalendarTemplateRenders(t *testing.T) {
 		[]WorkoutExercise{{ID: 1, Name: "</script><b>x", Category: "Chest"}}, nil, nil)
 	daysJ, _ := json.Marshal(days)
 	rec := httptest.NewRecorder()
-	renderTemplate(rec, "calendar", calendarPageData{Days: template.JS(daysJ), OAuthEnabled: true})
+	renderTemplate(rec, "calendar", calendarPageData{Days: template.JS(daysJ), SyncStatus: template.JS(`{"state":"none"}`), OAuthEnabled: true})
 	body := rec.Body.String()
 	if rec.Code != 200 || !strings.Contains(body, "Connect wger") || !strings.Contains(body, `const DAYS = [{"date":"2026-11-02"`) {
 		t.Fatalf("unexpected render (%d): %.400s", rec.Code, body)
