@@ -49,6 +49,8 @@ func main() {
 		r.Post("/workout/entries", h.UpsertWorkoutLogEntries)
 		r.Get("/workout/sessions", h.ListWorkoutSessions)
 		r.Post("/workout/sessions", h.UpsertWorkoutSessions)
+		r.Get("/workout/plan", h.ListWorkoutPlanDays)
+		r.Post("/workout/plan", h.ReplaceWorkoutPlanDays)
 		// wger OAuth tokens: internal only, never expose under /api.
 		r.Get("/wger/oauth", h.GetWgerOAuth)
 		r.Post("/wger/oauth", h.PutWgerOAuth)

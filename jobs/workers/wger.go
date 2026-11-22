@@ -55,8 +55,20 @@ type wgerSession struct {
 }
 
 type wgerDay struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
+	ID      int    `json:"id"`
+	Routine int    `json:"routine"`
+	Name    string `json:"name"`
+	IsRest  bool   `json:"is_rest"`
+}
+
+type wgerSlot struct {
+	ID  int `json:"id"`
+	Day int `json:"day"`
+}
+
+type wgerSlotEntry struct {
+	Slot     int `json:"slot"`
+	Exercise int `json:"exercise"`
 }
 
 type wgerPage[T any] struct {
@@ -159,7 +171,27 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 			}
 		}
 	}
+	// Routine days and the exercises they plan: the calendar matches logged days against them.
+	var days []wgerDay
+	var slots []wgerSlot
+	var slotEntries []wgerSlotEntry
+	for _, f := range []func() error{
+		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/day/?limit=200", token, &days) },
+		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/slot/?limit=500", token, &slots) },
+		func() error { return wgerGetAll(ctx, w.WgerURL+"/api/v2/slot-entry/?limit=1000", token, &slotEntries) },
+	} {
+		if err := f(); err != nil {
+			return fmt.Errorf("wger fetch routine plan: %w", err)
+		}
+	}
 	dayNames := map[int]string{}
+	for _, d := range days {
+		dayNames[d.ID] = d.Name
+	}
+	if err := postJSON(ctx, w.APIBaseURL+"/internal/workout/plan", planDays(days, slots, slotEntries)); err != nil {
+		return fmt.Errorf("post workout plan: %w", err)
+	}
+
 	sessionRows := make([]map[string]any, 0, len(sessions))
 	for _, s := range sessions {
 		date := firstLogDate[s.ID]
@@ -171,17 +203,7 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 		}
 		name := ""
 		if s.Day != nil {
-			if n, ok := dayNames[*s.Day]; ok {
-				name = n
-			} else {
-				var d wgerDay
-				if err := wgerGet(ctx, fmt.Sprintf("%s/api/v2/day/%d/", w.WgerURL, *s.Day), token, &d); err != nil {
-					slog.Warn("wger day lookup failed", "day_id", *s.Day, "err", err)
-				} else {
-					name = d.Name
-				}
-				dayNames[*s.Day] = name
-			}
+			name = dayNames[*s.Day]
 		}
 		sessionRows = append(sessionRows, map[string]any{"id": s.ID, "date": date, "day_name": name})
 	}
@@ -211,8 +233,35 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 		return fmt.Errorf("post workout entries: %w", err)
 	}
 
-	slog.Info("wger sync complete", "exercises", len(exercises), "sessions", len(sessionRows), "entries", len(entries))
+	slog.Info("wger sync complete", "exercises", len(exercises), "sessions", len(sessionRows), "entries", len(entries), "plan_days", len(days))
 	return nil
+}
+
+// planDays joins routine days with their slot entries into [{day_id, routine_id, name, is_rest, exercise_ids}].
+func planDays(days []wgerDay, slots []wgerSlot, entries []wgerSlotEntry) []map[string]any {
+	slotDay := make(map[int]int, len(slots))
+	for _, s := range slots {
+		slotDay[s.ID] = s.Day
+	}
+	exercises := map[int][]int{}
+	seen := map[[2]int]bool{}
+	for _, e := range entries {
+		day, ok := slotDay[e.Slot]
+		if !ok || seen[[2]int{day, e.Exercise}] {
+			continue
+		}
+		seen[[2]int{day, e.Exercise}] = true
+		exercises[day] = append(exercises[day], e.Exercise)
+	}
+	out := make([]map[string]any, 0, len(days))
+	for _, d := range days {
+		ids := exercises[d.ID]
+		if ids == nil {
+			ids = []int{}
+		}
+		out = append(out, map[string]any{"day_id": d.ID, "routine_id": d.Routine, "name": d.Name, "is_rest": d.IsRest, "exercise_ids": ids})
+	}
+	return out
 }
 
 // accessToken returns a valid wger access token, refreshing (and persisting the rotated

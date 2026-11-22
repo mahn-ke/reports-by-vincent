@@ -41,3 +41,19 @@ func TestDecodeWger27Shapes(t *testing.T) {
 		t.Errorf("unexpected exerciseinfo decode: %+v", info)
 	}
 }
+
+func TestPlanDays(t *testing.T) {
+	days := []wgerDay{{ID: 4, Routine: 2, Name: "Pull"}, {ID: 5, Routine: 2, Name: "Full Body", IsRest: true}}
+	slots := []wgerSlot{{ID: 10, Day: 4}, {ID: 11, Day: 4}, {ID: 12, Day: 99}}
+	entries := []wgerSlotEntry{{Slot: 10, Exercise: 94}, {Slot: 11, Exercise: 158}, {Slot: 11, Exercise: 94}, {Slot: 12, Exercise: 1}}
+	got := planDays(days, slots, entries)
+	if len(got) != 2 {
+		t.Fatalf("want 2 days, got %d", len(got))
+	}
+	if ids := got[0]["exercise_ids"].([]int); len(ids) != 2 || ids[0] != 94 || ids[1] != 158 {
+		t.Errorf("pull exercises = %v, want [94 158] (deduplicated, in slot order)", ids)
+	}
+	if ids := got[1]["exercise_ids"].([]int); len(ids) != 0 || got[1]["is_rest"] != true {
+		t.Errorf("rest day = %v", got[1])
+	}
+}
