@@ -50,7 +50,7 @@ The type is only a label. Overload is scored the same way as the suggestions in 
 - The baseline is the **first N sets** of that session, where N is the number of sets planned for the exercise today (from the routine's sets config at that visit). Extra sets done last time don't raise the bar.
 - A set's volume is kg × reps, or the reps for sets without weight. Overload means strictly more volume.
 
-Each exercise counts towards each of its primary muscles in wger, or its category if wger lists none. A muscle group is overloaded when its volume beats its baseline. The day is:
+Each exercise counts towards each of its primary muscles in wger, or its category if wger lists none. A few exercises from wger.de have no muscles. For those, `jobs/workers/muscle_overrides.go` holds researched primary muscles with their sources. They live in reports, not wger, because wger's weekly exercise sync from wger.de would reset local edits. An override is ignored as soon as wger.de tags the exercise itself. A muscle group is overloaded when its volume beats its baseline. The day is:
 
 - **green** when every group was overloaded
 - **yellow** when at least half were, or when every group repeated last time exactly

@@ -71,3 +71,33 @@ func TestPlanDays(t *testing.T) {
 		t.Errorf("rest day = %v", got[1])
 	}
 }
+
+func TestPrimaryMusclesOverride(t *testing.T) {
+	const pecDeck = "e797ca42-f9fc-480a-8f48-7f6905978c72"
+	if got := primaryMuscles(pecDeck, []string{}); len(got) != 1 || got[0] != "Shoulders" {
+		t.Errorf("override not applied: %v", got)
+	}
+	if got := primaryMuscles(pecDeck, []string{"Trapezius"}); len(got) != 1 || got[0] != "Trapezius" {
+		t.Errorf("wger's own muscles must win once present: %v", got)
+	}
+	if got := primaryMuscles("not-overridden", []string{}); len(got) != 0 {
+		t.Errorf("unknown exercise changed: %v", got)
+	}
+}
+
+// Override muscle names must be names wger uses, or the calendar would invent new groups.
+func TestMuscleOverrideNamesAreWgerMuscles(t *testing.T) {
+	wger := map[string]bool{"Biceps": true, "Shoulders": true, "Serratus anterior": true, "Chest": true, "Triceps": true,
+		"Abs": true, "Calves": true, "Glutes": true, "Trapezius": true, "Quads": true, "Hamstrings": true, "Lats": true,
+		"Brachialis": true, "Obliquus externus abdominis": true, "Soleus": true, "Lower back": true}
+	for uuid, o := range muscleOverrides {
+		if len(o.Primary) == 0 || len(o.Sources) == 0 {
+			t.Errorf("%s (%s): needs primary muscles and sources", o.Name, uuid)
+		}
+		for _, m := range append(append([]string{}, o.Primary...), o.Secondary...) {
+			if !wger[m] {
+				t.Errorf("%s: %q is not a wger muscle name", o.Name, m)
+			}
+		}
+	}
+}
