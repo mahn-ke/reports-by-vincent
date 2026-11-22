@@ -34,6 +34,9 @@ type App struct {
 	apiURL        string
 	providerName  string
 	baseURL       string
+	// wger OAuth client ("Connect wger"); nil when WGER_OAUTH_CLIENT_ID/SECRET are unset.
+	wgerOAuth *oauth2.Config
+	jobsURL   string
 }
 
 // --- Types mirroring API responses ---
@@ -64,11 +67,20 @@ type BodyMeasurement struct {
 }
 
 type WorkoutExercise struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
+	ID       int      `json:"id"`
+	Name     string   `json:"name"`
+	Category string   `json:"category"`
+	Muscles  []string `json:"muscles"`
+}
+
+type WorkoutSession struct {
+	ID      int    `json:"id"`
+	Date    string `json:"date"`
+	DayName string `json:"day_name"`
 }
 
 type WorkoutLogEntry struct {
+	SessionID   *int    `json:"session_id"`
 	ExerciseID  int     `json:"exercise_id"`
 	Date        string  `json:"date"`
 	Weight      float64 `json:"weight"`
@@ -495,6 +507,123 @@ func (a *App) handleWorkout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- wger connection ("Connect wger" via wger's OAuth provider, which logs in through Keycloak SSO) ---
+
+func (a *App) wgerConnected(ctx context.Context) bool {
+	req, _ := http.NewRequestWithContext(ctx, "GET", a.apiURL+"/internal/wger/oauth", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode == http.StatusOK
+}
+
+func (a *App) handleWgerConnect(w http.ResponseWriter, r *http.Request) {
+	if a.wgerOAuth == nil {
+		http.Error(w, "wger OAuth not configured (WGER_OAUTH_CLIENT_ID/SECRET)", http.StatusServiceUnavailable)
+		return
+	}
+	state := randomState()
+	verifier := oauth2.GenerateVerifier()
+	sess, _ := a.store.Get(r, "wger-oauth-state")
+	sess.Values["state"] = state
+	sess.Values["pkce_verifier"] = verifier
+	sess.Save(r, w)
+	http.Redirect(w, r, a.wgerOAuth.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier)), http.StatusFound)
+}
+
+func (a *App) handleWgerCallback(w http.ResponseWriter, r *http.Request) {
+	if a.wgerOAuth == nil {
+		http.Error(w, "wger OAuth not configured", http.StatusServiceUnavailable)
+		return
+	}
+	stateSess, _ := a.store.Get(r, "wger-oauth-state")
+	expected, _ := stateSess.Values["state"].(string)
+	if expected == "" || r.URL.Query().Get("state") != expected {
+		http.Error(w, "state mismatch", http.StatusBadRequest)
+		return
+	}
+	verifier, _ := stateSess.Values["pkce_verifier"].(string)
+	stateSess.Options.MaxAge = -1
+	stateSess.Save(r, w)
+
+	if e := r.URL.Query().Get("error"); e != "" {
+		slog.Warn("wger authorization denied", "error", e)
+		http.Redirect(w, r, "/workout/calendar?wger=error", http.StatusFound)
+		return
+	}
+
+	token, err := a.wgerOAuth.Exchange(r.Context(), r.URL.Query().Get("code"), oauth2.VerifierOption(verifier))
+	if err != nil {
+		slog.Error("wger token exchange failed", "err", err)
+		http.Redirect(w, r, "/workout/calendar?wger=error", http.StatusFound)
+		return
+	}
+	expiry := token.Expiry
+	if expiry.IsZero() {
+		expiry = time.Now().Add(time.Hour)
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"access_token":  token.AccessToken,
+		"refresh_token": token.RefreshToken,
+		"expires_at":    expiry,
+	})
+	resp, err := http.Post(a.apiURL+"/internal/wger/oauth", "application/json", strings.NewReader(string(payload)))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		slog.Error("storing wger token failed", "err", err)
+		http.Redirect(w, r, "/workout/calendar?wger=error", http.StatusFound)
+		return
+	}
+	resp.Body.Close()
+
+	a.triggerWgerSync()
+	http.Redirect(w, r, "/workout/calendar?wger=connected", http.StatusFound)
+}
+
+// triggerWgerSync asks the jobs service to enqueue a wger sync now instead of waiting for the daily run.
+func (a *App) triggerWgerSync() {
+	resp, err := http.Post(a.jobsURL+"/trigger/wger", "application/json", nil)
+	if err != nil {
+		slog.Warn("triggering wger sync failed", "err", err)
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		slog.Warn("triggering wger sync failed", "status", resp.StatusCode)
+	}
+}
+
+func (a *App) handleWgerResync(w http.ResponseWriter, r *http.Request) {
+	a.triggerWgerSync()
+	http.Redirect(w, r, "/workout/calendar?wger=syncing", http.StatusFound)
+}
+
+type calendarPageData struct {
+	Days         template.JS
+	Connected    bool
+	OAuthEnabled bool
+	Flash        string
+}
+
+func (a *App) handleWorkoutCalendar(w http.ResponseWriter, r *http.Request) {
+	var exercises []WorkoutExercise
+	var entries []WorkoutLogEntry
+	var sessions []WorkoutSession
+	a.apiGet(r.Context(), "/internal/workout/exercises", &exercises)
+	a.apiGet(r.Context(), "/internal/workout/entries", &entries)
+	a.apiGet(r.Context(), "/internal/workout/sessions", &sessions)
+
+	daysJ, _ := json.Marshal(buildCalendar(entries, exercises, sessions))
+	renderTemplate(w, "calendar", calendarPageData{
+		Days:         template.JS(daysJ),
+		Connected:    a.wgerConnected(r.Context()),
+		OAuthEnabled: a.wgerOAuth != nil,
+		Flash:        r.URL.Query().Get("wger"),
+	})
+}
+
 // --- main ---
 
 func main() {
@@ -549,6 +678,30 @@ func main() {
 		slog.Warn("OIDC env vars missing — OIDC login disabled")
 	}
 
+	app.jobsURL = os.Getenv("JOBS_URL")
+	if app.jobsURL == "" {
+		app.jobsURL = "http://jobs:8080"
+	}
+	wgerURL := strings.TrimRight(os.Getenv("WGER_URL"), "/")
+	if wgerURL == "" {
+		wgerURL = "https://fitness.by.vincent.mahn.ke"
+	}
+	if id, secret := os.Getenv("WGER_OAUTH_CLIENT_ID"), os.Getenv("WGER_OAUTH_CLIENT_SECRET"); id != "" && secret != "" {
+		app.wgerOAuth = &oauth2.Config{
+			ClientID:     id,
+			ClientSecret: secret,
+			RedirectURL:  app.baseURL + "/wger/callback",
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  wgerURL + "/identity/o/authorize",
+				TokenURL: wgerURL + "/identity/o/api/token",
+			},
+			Scopes: []string{"api:read"},
+		}
+		slog.Info("wger OAuth enabled", "url", wgerURL)
+	} else {
+		slog.Warn("WGER_OAUTH_CLIENT_ID/SECRET missing — \"Connect wger\" disabled")
+	}
+
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
@@ -565,6 +718,10 @@ func main() {
 		r.Get("/training", app.handleTraining)
 		r.Get("/body", app.handleBody)
 		r.Get("/workout", app.handleWorkout)
+		r.Get("/workout/calendar", app.handleWorkoutCalendar)
+		r.Get("/wger/connect", app.handleWgerConnect)
+		r.Get("/wger/callback", app.handleWgerCallback)
+		r.Post("/wger/resync", app.handleWgerResync)
 	})
 
 	slog.Info("App listening on :8080")

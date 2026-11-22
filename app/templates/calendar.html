@@ -1,0 +1,196 @@
+{{define "title"}}Workout Calendar{{end}}
+{{define "content"}}
+<style>
+  .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.4rem; }
+  .cal-head { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bs-secondary-color); text-align: center; padding-bottom: 0.2rem; }
+  .cal-cell { min-height: 92px; border: 1px solid var(--bs-border-color); border-radius: 0.5rem; padding: 0.35rem 0.45rem; display: flex; flex-direction: column; gap: 0.15rem; background: var(--bs-body-bg); }
+  .cal-cell.outside { opacity: 0.35; }
+  .cal-cell.today { outline: 2px solid var(--bs-primary); outline-offset: -2px; }
+  .cal-cell.has-workout { cursor: pointer; }
+  .cal-cell.has-workout:focus-visible { outline: 2px solid var(--bs-primary); }
+  .cal-cell.up    { background: rgba(34, 197, 94, 0.22);  border-color: rgba(34, 197, 94, 0.7); }
+  .cal-cell.same  { background: rgba(234, 179, 8, 0.22);  border-color: rgba(234, 179, 8, 0.7); }
+  .cal-cell.down  { background: rgba(239, 68, 68, 0.22);  border-color: rgba(239, 68, 68, 0.7); }
+  .cal-cell.first { background: rgba(148, 163, 184, 0.14); border-color: rgba(148, 163, 184, 0.5); }
+  .cal-day { font-size: 0.8rem; color: var(--bs-secondary-color); }
+  .cal-type { font-weight: 600; font-size: 0.85rem; }
+  .cal-delta { font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+  .legend-swatch { display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 0.2rem; vertical-align: -0.1rem; margin-right: 0.3rem; border: 1px solid; }
+  @media (max-width: 576px) { .cal-cell { min-height: 64px; padding: 0.2rem; } .cal-delta { display: none; } }
+</style>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <h2 class="mb-0 me-auto">Workout Calendar</h2>
+  {{if .Connected}}
+    <span class="badge text-bg-success">wger connected</span>
+    <form method="post" action="/wger/resync" class="d-inline"><button class="btn btn-sm btn-outline-secondary">Resync</button></form>
+    {{if .OAuthEnabled}}<a class="btn btn-sm btn-outline-secondary" href="/wger/connect">Reconnect</a>{{end}}
+  {{else if .OAuthEnabled}}
+    <a class="btn btn-sm btn-primary" href="/wger/connect">Connect wger</a>
+  {{else}}
+    <span class="badge text-bg-warning">wger OAuth not configured</span>
+  {{end}}
+</div>
+
+{{if eq .Flash "connected"}}<div class="alert alert-success py-2">wger connected — sync started. Refresh in a moment.</div>{{end}}
+{{if eq .Flash "syncing"}}<div class="alert alert-info py-2">Sync started. Refresh in a moment.</div>{{end}}
+{{if eq .Flash "error"}}<div class="alert alert-danger py-2">Connecting to wger failed. Check the app logs and try again.</div>{{end}}
+
+<div class="d-flex align-items-center gap-2 mb-2">
+  <button type="button" class="btn btn-sm btn-outline-secondary" id="prev-month" aria-label="Previous month">‹</button>
+  <h5 class="mb-0 text-center" id="month-label" style="min-width:11rem;"></h5>
+  <button type="button" class="btn btn-sm btn-outline-secondary" id="next-month" aria-label="Next month">›</button>
+  <button type="button" class="btn btn-sm btn-link" id="this-month">Today</button>
+  <span class="ms-auto small text-body-secondary" id="month-summary"></span>
+</div>
+
+<div class="cal-grid mb-1" id="cal-head"></div>
+<div class="cal-grid mb-3" id="cal-grid"></div>
+
+<div class="small text-body-secondary mb-3 d-flex flex-wrap gap-3">
+  <span><span class="legend-swatch" style="background:rgba(34,197,94,.22);border-color:rgba(34,197,94,.7)"></span>More volume than last same-type day</span>
+  <span><span class="legend-swatch" style="background:rgba(234,179,8,.22);border-color:rgba(234,179,8,.7)"></span>Identical</span>
+  <span><span class="legend-swatch" style="background:rgba(239,68,68,.22);border-color:rgba(239,68,68,.7)"></span>Less</span>
+  <span><span class="legend-swatch" style="background:rgba(148,163,184,.14);border-color:rgba(148,163,184,.5)"></span>First of its type / unclassified</span>
+  <span>Volume = Σ kg × reps (reps when both days are bodyweight-only).</span>
+</div>
+
+<div class="card" id="detail-card" hidden>
+  <div class="card-body">
+    <h6 class="card-title mb-1" id="detail-title"></h6>
+    <p class="small text-body-secondary mb-2" id="detail-subtitle"></p>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead><tr><th>Exercise</th><th class="text-end">Sets</th><th class="text-end">Reps</th><th class="text-end">Volume</th><th class="text-end">Last time</th></tr></thead>
+        <tbody id="detail-rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+const DAYS = {{.Days}} || [];
+const byDate = new Map(DAYS.map(d => [d.date, d]));
+const TYPE_LABEL = { push: 'Push', pull: 'Pull', legs: 'Legs' };
+const STATUS_LABEL = { up: 'progressive overload', same: 'identical', down: 'less than last time', first: '' };
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function fmtNum(v) { return Math.round(v).toLocaleString(); }
+function fmtVolume(day, prev) {
+  // Bodyweight-only comparisons are on reps; otherwise kg × reps.
+  if (day.volume === 0 && (prev === undefined || prev === 0)) return `${day.reps} reps`;
+  return `${fmtNum(day.volume)} kg`;
+}
+function deltaText(day) {
+  if (!day.prevDate) return '';
+  const bodyweight = day.volume === 0 && day.prevVolume === 0;
+  const diff = bodyweight ? day.reps - day.prevReps : day.volume - day.prevVolume;
+  const sign = diff > 0 ? '+' : diff < 0 ? '−' : '±';
+  return `${sign}${fmtNum(Math.abs(diff))}${bodyweight ? ' reps' : ' kg'}`;
+}
+
+let view = new Date();
+view.setDate(1);
+
+document.getElementById('cal-head').append(...WEEKDAYS.map(w => {
+  const el = document.createElement('div');
+  el.className = 'cal-head';
+  el.textContent = w;
+  return el;
+}));
+
+function render() {
+  const grid = document.getElementById('cal-grid');
+  grid.replaceChildren();
+  const year = view.getFullYear(), month = view.getMonth();
+  document.getElementById('month-label').textContent =
+    view.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const first = new Date(year, month, 1);
+  const start = new Date(first);
+  start.setDate(1 - ((first.getDay() + 6) % 7)); // back to Monday
+  const todayStr = ymd(new Date());
+  const counts = { up: 0, same: 0, down: 0, first: 0 };
+
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    if (i >= 35 && d.getMonth() !== month) break; // drop an all-outside 6th week
+    const key = ymd(d);
+    const day = byDate.get(key);
+    const inMonth = d.getMonth() === month;
+
+    const cell = document.createElement('div');
+    cell.className = 'cal-cell';
+    if (!inMonth) cell.classList.add('outside');
+    if (key === todayStr) cell.classList.add('today');
+
+    const num = document.createElement('div');
+    num.className = 'cal-day';
+    num.textContent = d.getDate();
+    cell.append(num);
+
+    if (day) {
+      cell.classList.add('has-workout', day.status);
+      if (inMonth) counts[day.status]++;
+      const type = document.createElement('div');
+      type.className = 'cal-type';
+      type.textContent = TYPE_LABEL[day.type] || 'Other';
+      const delta = document.createElement('div');
+      delta.className = 'cal-delta';
+      delta.textContent = day.prevDate ? deltaText(day) : fmtVolume(day);
+      cell.append(type, delta);
+      cell.tabIndex = 0;
+      cell.title = `${TYPE_LABEL[day.type] || 'Unclassified'} · ${fmtVolume(day, day.prevVolume)}` +
+        (day.prevDate ? ` vs ${day.prevDate} (${deltaText(day)}) — ${STATUS_LABEL[day.status]}` : ' — no earlier day of this type');
+      cell.addEventListener('click', () => showDetail(day));
+      cell.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showDetail(day); } });
+    }
+    grid.append(cell);
+  }
+
+  const parts = [];
+  if (counts.up) parts.push(`${counts.up} up`);
+  if (counts.same) parts.push(`${counts.same} same`);
+  if (counts.down) parts.push(`${counts.down} down`);
+  if (counts.first) parts.push(`${counts.first} other`);
+  document.getElementById('month-summary').textContent = parts.length ? parts.join(' · ') : 'No workouts this month';
+}
+
+function showDetail(day) {
+  const card = document.getElementById('detail-card');
+  card.hidden = false;
+  const label = TYPE_LABEL[day.type] || 'Unclassified';
+  document.getElementById('detail-title').textContent =
+    `${new Date(day.date + 'T00:00').toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} — ${label}`;
+  const source = day.source === 'routine' ? 'from wger routine day name' : day.source === 'muscles' ? 'from exercise muscles' : 'no push/pull/legs match';
+  document.getElementById('detail-subtitle').textContent = day.prevDate
+    ? `${fmtVolume(day, day.prevVolume)} vs ${fmtVolume({ volume: day.prevVolume, reps: day.prevReps }, day.volume)} on ${day.prevDate} (${deltaText(day)}, ${STATUS_LABEL[day.status]}) · type ${source}`
+    : `${fmtVolume(day)} · first ${label.toLowerCase()} day on record · type ${source}`;
+
+  const rows = document.getElementById('detail-rows');
+  rows.replaceChildren(...day.exercises.map(x => {
+    const tr = document.createElement('tr');
+    const last = x.prevVolume === undefined || x.prevVolume === null ? '—' : `${fmtNum(x.prevVolume)} kg`;
+    [x.name, x.sets, x.reps, `${fmtNum(x.volume)} kg`, last].forEach((v, i) => {
+      const td = document.createElement('td');
+      if (i > 0) td.className = 'text-end';
+      td.textContent = v;
+      tr.append(td);
+    });
+    return tr;
+  }));
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+document.getElementById('prev-month').addEventListener('click', () => { view.setMonth(view.getMonth() - 1); render(); });
+document.getElementById('next-month').addEventListener('click', () => { view.setMonth(view.getMonth() + 1); render(); });
+document.getElementById('this-month').addEventListener('click', () => { view = new Date(); view.setDate(1); render(); });
+render();
+</script>
+{{end}}

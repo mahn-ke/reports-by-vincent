@@ -2,72 +2,93 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type WorkoutExercise struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
+	ID       int      `json:"id"`
+	Name     string   `json:"name"`
+	Category string   `json:"category"`
+	Muscles  []string `json:"muscles"`
 }
 
 type WorkoutLogEntry struct {
 	ID          int     `json:"id"`
+	WgerID      *int    `json:"wger_id,omitempty"`
+	SessionID   *int    `json:"session_id,omitempty"`
 	ExerciseID  int     `json:"exercise_id"`
 	Date        string  `json:"date"`
 	Weight      float64 `json:"weight"`
 	Repetitions int     `json:"repetitions"`
-}
-
-type WorkoutExerciseInput struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
 }
 
 type WorkoutLogEntryInput struct {
+	WgerID      int     `json:"wger_id"`
+	SessionID   *int    `json:"session_id"`
 	ExerciseID  int     `json:"exercise_id"`
 	Date        string  `json:"date"`
 	Weight      float64 `json:"weight"`
 	Repetitions int     `json:"repetitions"`
+}
+
+type WorkoutSession struct {
+	ID      int    `json:"id"`
+	Date    string `json:"date"`
+	DayName string `json:"day_name"`
+}
+
+type WgerOAuthToken struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
 }
 
 func (h *Handler) ListWorkoutExercises(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(),
-		`SELECT id, name FROM workout_exercises ORDER BY id ASC`)
+		`SELECT id, name, category, muscles FROM workout_exercises ORDER BY id ASC`)
 	if err != nil {
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	var exercises []WorkoutExercise
+	exercises := []WorkoutExercise{}
 	for rows.Next() {
 		var e WorkoutExercise
-		if err := rows.Scan(&e.ID, &e.Name); err != nil {
+		if err := rows.Scan(&e.ID, &e.Name, &e.Category, &e.Muscles); err != nil {
 			http.Error(w, "scan failed", http.StatusInternalServerError)
 			return
 		}
 		exercises = append(exercises, e)
 	}
-	if exercises == nil {
-		exercises = []WorkoutExercise{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(exercises)
+	writeJSON(w, exercises)
 }
 
 func (h *Handler) UpsertWorkoutExercises(w http.ResponseWriter, r *http.Request) {
-	var entries []WorkoutExerciseInput
+	var entries []WorkoutExercise
 	if err := json.NewDecoder(r.Body).Decode(&entries); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 	for _, e := range entries {
+		if e.Muscles == nil {
+			e.Muscles = []string{}
+		}
 		if _, err := h.db.Exec(r.Context(),
-			`INSERT INTO workout_exercises (id, name, updated_at)
-			 VALUES ($1, $2, $3)
-			 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = EXCLUDED.updated_at`,
-			e.ID, e.Name, time.Now()); err != nil {
+			`INSERT INTO workout_exercises (id, name, category, muscles, updated_at)
+			 VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, category = EXCLUDED.category,
+			   muscles = EXCLUDED.muscles, updated_at = EXCLUDED.updated_at`,
+			e.ID, e.Name, e.Category, e.Muscles, time.Now()); err != nil {
 			http.Error(w, "upsert failed", http.StatusInternalServerError)
 			return
 		}
@@ -77,46 +98,142 @@ func (h *Handler) UpsertWorkoutExercises(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) ListWorkoutLogEntries(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(),
-		`SELECT id, exercise_id, date, weight, repetitions FROM workout_log_entries ORDER BY date ASC, exercise_id ASC`)
+		`SELECT id, wger_id, session_id, exercise_id, date, weight, repetitions
+		 FROM workout_log_entries ORDER BY date ASC, exercise_id ASC, id ASC`)
 	if err != nil {
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	var entries []WorkoutLogEntry
+	entries := []WorkoutLogEntry{}
 	for rows.Next() {
 		var e WorkoutLogEntry
 		var date time.Time
-		if err := rows.Scan(&e.ID, &e.ExerciseID, &date, &e.Weight, &e.Repetitions); err != nil {
+		if err := rows.Scan(&e.ID, &e.WgerID, &e.SessionID, &e.ExerciseID, &date, &e.Weight, &e.Repetitions); err != nil {
 			http.Error(w, "scan failed", http.StatusInternalServerError)
 			return
 		}
 		e.Date = date.Format("2006-01-02")
 		entries = append(entries, e)
 	}
-	if entries == nil {
-		entries = []WorkoutLogEntry{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(entries)
+	writeJSON(w, entries)
 }
 
+// UpsertWorkoutLogEntries replaces the synced set list: entries are upserted by wger id and
+// rows whose wger id is no longer present (deleted in wger) are removed.
 func (h *Handler) UpsertWorkoutLogEntries(w http.ResponseWriter, r *http.Request) {
 	var entries []WorkoutLogEntryInput
 	if err := json.NewDecoder(r.Body).Decode(&entries); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		http.Error(w, "begin failed", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	ids := make([]int, 0, len(entries))
 	for _, e := range entries {
-		if _, err := h.db.Exec(r.Context(),
-			`INSERT INTO workout_log_entries (exercise_id, date, weight, repetitions)
-			 VALUES ($1, $2, $3, $4)
-			 ON CONFLICT (exercise_id, date, weight, repetitions) DO NOTHING`,
-			e.ExerciseID, e.Date, e.Weight, e.Repetitions); err != nil {
+		ids = append(ids, e.WgerID)
+		if _, err := tx.Exec(r.Context(),
+			`INSERT INTO workout_log_entries (wger_id, session_id, exercise_id, date, weight, repetitions)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (wger_id) DO UPDATE SET session_id = EXCLUDED.session_id,
+			   exercise_id = EXCLUDED.exercise_id, date = EXCLUDED.date,
+			   weight = EXCLUDED.weight, repetitions = EXCLUDED.repetitions`,
+			e.WgerID, e.SessionID, e.ExerciseID, e.Date, e.Weight, e.Repetitions); err != nil {
 			http.Error(w, "upsert failed", http.StatusInternalServerError)
 			return
 		}
+	}
+	if _, err := tx.Exec(r.Context(),
+		`DELETE FROM workout_log_entries WHERE NOT (wger_id = ANY($1))`, ids); err != nil {
+		http.Error(w, "prune failed", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		http.Error(w, "commit failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) ListWorkoutSessions(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.Query(r.Context(),
+		`SELECT id, date, day_name FROM workout_sessions ORDER BY date ASC, id ASC`)
+	if err != nil {
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	sessions := []WorkoutSession{}
+	for rows.Next() {
+		var s WorkoutSession
+		var date time.Time
+		if err := rows.Scan(&s.ID, &date, &s.DayName); err != nil {
+			http.Error(w, "scan failed", http.StatusInternalServerError)
+			return
+		}
+		s.Date = date.Format("2006-01-02")
+		sessions = append(sessions, s)
+	}
+	writeJSON(w, sessions)
+}
+
+func (h *Handler) UpsertWorkoutSessions(w http.ResponseWriter, r *http.Request) {
+	var sessions []WorkoutSession
+	if err := json.NewDecoder(r.Body).Decode(&sessions); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	for _, s := range sessions {
+		if _, err := h.db.Exec(r.Context(),
+			`INSERT INTO workout_sessions (id, date, day_name) VALUES ($1, $2, $3)
+			 ON CONFLICT (id) DO UPDATE SET date = EXCLUDED.date, day_name = EXCLUDED.day_name`,
+			s.ID, s.Date, s.DayName); err != nil {
+			http.Error(w, "upsert failed", http.StatusInternalServerError)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// GetWgerOAuth returns the stored wger OAuth token, or 404 if reports is not connected to wger.
+// Internal-only: never register this under the external /api routes.
+func (h *Handler) GetWgerOAuth(w http.ResponseWriter, r *http.Request) {
+	var t WgerOAuthToken
+	err := h.db.QueryRow(r.Context(),
+		`SELECT access_token, refresh_token, expires_at FROM wger_oauth WHERE id = 1`).
+		Scan(&t.AccessToken, &t.RefreshToken, &t.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "not connected", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, t)
+}
+
+func (h *Handler) PutWgerOAuth(w http.ResponseWriter, r *http.Request) {
+	var t WgerOAuthToken
+	if err := json.NewDecoder(r.Body).Decode(&t); err != nil || t.AccessToken == "" || t.RefreshToken == "" {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if _, err := h.db.Exec(r.Context(),
+		`INSERT INTO wger_oauth (id, access_token, refresh_token, expires_at, updated_at)
+		 VALUES (1, $1, $2, $3, NOW())
+		 ON CONFLICT (id) DO UPDATE SET access_token = EXCLUDED.access_token,
+		   refresh_token = EXCLUDED.refresh_token, expires_at = EXCLUDED.expires_at, updated_at = NOW()`,
+		t.AccessToken, t.RefreshToken, t.ExpiresAt); err != nil {
+		http.Error(w, "upsert failed", http.StatusInternalServerError)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
