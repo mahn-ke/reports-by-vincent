@@ -1,7 +1,8 @@
 # http
 # Local env vars required: DB_PASSWORD, SESSION_SECRET, OAUTH_CLIENT_ID,
 #   OAUTH_CLIENT_SECRET, OAUTH_NAME,
-#   MFP_COOKIE, FITX_EMAIL, FITX_PASSWORD, GARMIN_EMAIL, GARMIN_PASSWORD
+#   MFP_COOKIE, FITX_EMAIL, FITX_PASSWORD, GARMIN_EMAIL, GARMIN_PASSWORD,
+#   WGER_OAUTH_CLIENT_ID, WGER_OAUTH_CLIENT_SECRET (wger OAuth app for "Connect wger")
 
 services:
   nginx:
@@ -54,6 +55,10 @@ services:
       OIDC_PROVIDER_NAME: ${OAUTH_NAME}
       APP_BASE_URL: ${APP_BASE_URL:-https://reports.by.vincent.mahn.ke}
       SESSION_SECRET: ${SESSION_SECRET}
+      JOBS_URL: http://jobs:8080
+      WGER_URL: https://fitness.by.vincent.mahn.ke
+      WGER_OAUTH_CLIENT_ID: ${WGER_OAUTH_CLIENT_ID}
+      WGER_OAUTH_CLIENT_SECRET: ${WGER_OAUTH_CLIENT_SECRET}
 
   jobs:
     image: ghcr.io/mahn-ke/reports-by-vincent/jobs:latest
@@ -74,7 +79,8 @@ services:
       FITX_EMAIL: ${FITX_EMAIL}
       FITX_PASSWORD: ${FITX_PASSWORD}
       WGER_URL: https://fitness.by.vincent.mahn.ke
-      WGER_TOKEN: ${WGER_TOKEN}
+      WGER_OAUTH_CLIENT_ID: ${WGER_OAUTH_CLIENT_ID}
+      WGER_OAUTH_CLIENT_SECRET: ${WGER_OAUTH_CLIENT_SECRET}
     ports:
       - "127.0.0.1:8083:8080"
 

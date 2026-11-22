@@ -47,6 +47,11 @@ func main() {
 		r.Post("/workout/exercises", h.UpsertWorkoutExercises)
 		r.Get("/workout/entries", h.ListWorkoutLogEntries)
 		r.Post("/workout/entries", h.UpsertWorkoutLogEntries)
+		r.Get("/workout/sessions", h.ListWorkoutSessions)
+		r.Post("/workout/sessions", h.UpsertWorkoutSessions)
+		// wger OAuth tokens: internal only, never expose under /api.
+		r.Get("/wger/oauth", h.GetWgerOAuth)
+		r.Post("/wger/oauth", h.PutWgerOAuth)
 	})
 
 	// OIDC-protected, admin-only routes for external clients (exposed via nginx at /api/). Skipped if OIDC_ISSUER is not configured.
@@ -65,6 +70,7 @@ func main() {
 			r.Get("/body", h.ListBody)
 			r.Get("/workout/exercises", h.ListWorkoutExercises)
 			r.Get("/workout/entries", h.ListWorkoutLogEntries)
+			r.Get("/workout/sessions", h.ListWorkoutSessions)
 		})
 	} else {
 		slog.Warn("OIDC_ISSUER not set — /api/* routes disabled")

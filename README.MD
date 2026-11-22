@@ -24,3 +24,20 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d app nginx
 ```
 
 With this override active, edits in `app/templates/*.html` are picked up on refresh without rebuilding the app image.
+
+## wger workouts and calendar
+
+The `jobs` service syncs workout logs from wger ([fitness.by.vincent.mahn.ke](https://fitness.by.vincent.mahn.ke))
+through wger's own OAuth2/OIDC provider. wger logs in through Keycloak, so connecting takes one click:
+open `/workout/calendar` and choose **Connect wger**. The app stores the token through the API's internal
+routes, and the worker refreshes it and keeps the rotated refresh token. "Resync" on the calendar page queues
+a sync right away (`POST /trigger/wger` on the `jobs` service, internal network only).
+
+The OAuth client (`reports-by-vincent`) is created by Terraform in `mahn-ke/repos`
+(`infrastructure/modules/wger_oauth`). Terraform sets this repository's `WGER_OAUTH_CLIENT_ID` and
+`WGER_OAUTH_CLIENT_SECRET` secrets, and fitness-by-vincent registers the client in wger on deploy.
+
+`/workout/calendar` labels each training day push, pull or legs. It uses the wger routine day name if
+that contains push/pull/leg, and otherwise the exercises' muscles. The day's volume (Σ kg × reps, or reps
+when both days are bodyweight-only) is compared with the previous day of the same type: green = more,
+yellow = identical, red = less.
