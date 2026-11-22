@@ -36,10 +36,11 @@ var errWgerNotConnected = errors.New("wger not connected")
 
 // wger API types
 
+// Log and session ids are UUIDs since wger 2.7 (PowerSync); day and exercise ids stay integers.
 type wgerWorkoutLog struct {
-	ID              int     `json:"id"`
+	ID              string  `json:"id"`
 	Exercise        int     `json:"exercise"`
-	Session         *int    `json:"session"`
+	Session         *string `json:"session"`
 	Date            string  `json:"date"`
 	Weight          *string `json:"weight"`
 	Repetitions     *string `json:"repetitions"`
@@ -48,7 +49,7 @@ type wgerWorkoutLog struct {
 }
 
 type wgerSession struct {
-	ID            int     `json:"id"`
+	ID            string  `json:"id"`
 	Day           *int    `json:"day"`
 	DatetimeStart *string `json:"datetime_start"`
 }
@@ -150,7 +151,7 @@ func (w *WgerWorker) Work(ctx context.Context, job *river.Job[WgerArgs]) error {
 	}
 
 	// Sessions with their routine day name ("Push", "Pull", "Legs", ...).
-	firstLogDate := map[int]string{}
+	firstLogDate := map[string]string{}
 	for _, l := range logs {
 		if l.Session != nil {
 			if _, ok := firstLogDate[*l.Session]; !ok {

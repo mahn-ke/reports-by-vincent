@@ -18,8 +18,8 @@ type WorkoutExercise struct {
 
 type WorkoutLogEntry struct {
 	ID          int     `json:"id"`
-	WgerID      *int    `json:"wger_id,omitempty"`
-	SessionID   *int    `json:"session_id,omitempty"`
+	WgerID      *string `json:"wger_id,omitempty"`
+	SessionID   *string `json:"session_id,omitempty"`
 	ExerciseID  int     `json:"exercise_id"`
 	Date        string  `json:"date"`
 	Weight      float64 `json:"weight"`
@@ -27,8 +27,8 @@ type WorkoutLogEntry struct {
 }
 
 type WorkoutLogEntryInput struct {
-	WgerID      int     `json:"wger_id"`
-	SessionID   *int    `json:"session_id"`
+	WgerID      string  `json:"wger_id"`
+	SessionID   *string `json:"session_id"`
 	ExerciseID  int     `json:"exercise_id"`
 	Date        string  `json:"date"`
 	Weight      float64 `json:"weight"`
@@ -36,7 +36,7 @@ type WorkoutLogEntryInput struct {
 }
 
 type WorkoutSession struct {
-	ID      int    `json:"id"`
+	ID      string `json:"id"`
 	Date    string `json:"date"`
 	DayName string `json:"day_name"`
 }
@@ -135,7 +135,7 @@ func (h *Handler) UpsertWorkoutLogEntries(w http.ResponseWriter, r *http.Request
 	}
 	defer tx.Rollback(r.Context())
 
-	ids := make([]int, 0, len(entries))
+	ids := make([]string, 0, len(entries))
 	for _, e := range entries {
 		ids = append(ids, e.WgerID)
 		if _, err := tx.Exec(r.Context(),

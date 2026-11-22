@@ -154,7 +154,7 @@ func buildCalendar(entries []WorkoutLogEntry, exercises []WorkoutExercise, sessi
 	for _, e := range exercises {
 		exByID[e.ID] = e
 	}
-	sessionName := make(map[int]string, len(sessions))
+	sessionName := make(map[string]string, len(sessions))
 	for _, s := range sessions {
 		sessionName[s.ID] = s.DayName
 	}
